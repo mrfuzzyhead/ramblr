@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.build/
+build/
+DerivedData/
+*.xcodeproj
+xcuserdata/
+.DS_Store
+*.swp
+*~
