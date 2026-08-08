@@ -8,6 +8,7 @@ enum DictationState: Equatable {
     case recording
     case processing
     case complete
+    case notice(String)
 }
 
 enum CaptureMode: Equatable {
@@ -84,7 +85,12 @@ final class DictationController: ObservableObject {
             return
         }
 
-        guard state == .idle || state == .complete else { return }
+        switch state {
+        case .idle, .complete, .notice:
+            break
+        default:
+            return
+        }
 
         self.mode = mode
         lastError = nil
@@ -169,10 +175,6 @@ final class DictationController: ObservableObject {
 
                 if editable {
                     FocusPasteService.paste(text)
-                } else {
-                    ToastPresenter.shared.show(
-                        message: "No field in focus. Transcription copied to the clipboard."
-                    )
                 }
 
                 settings.prependHistory(
@@ -184,26 +186,40 @@ final class DictationController: ObservableObject {
                         transcriptionMs: transcriptionMs
                     )
                 )
-                showCompleteThenIdle()
+
+                if editable {
+                    showTransientThenIdle(.complete)
+                } else {
+                    showTransientThenIdle(.notice("No field in focus"))
+                }
             } catch {
                 lastError = error.localizedDescription
-                ToastPresenter.shared.show(message: error.localizedDescription)
-                state = .idle
+                showTransientThenIdle(.notice(error.localizedDescription))
             }
         }
     }
 
-    private func showCompleteThenIdle() {
-        state = .complete
+    private func showTransientThenIdle(_ next: DictationState) {
+        state = next
         completeResetWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            if self.state == .complete {
+            switch self.state {
+            case .complete, .notice:
                 self.state = .idle
+            default:
+                break
             }
         }
         completeResetWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+        let delay: TimeInterval
+        switch next {
+        case .complete:
+            delay = 1.25
+        default:
+            delay = 3
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func startElapsedTimer() {

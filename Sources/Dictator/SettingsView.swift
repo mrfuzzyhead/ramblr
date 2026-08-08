@@ -94,7 +94,7 @@ struct SettingsView: View {
                             .frame(width: 16)
                         Text(item.title)
                             .font(.system(size: 13, weight: .medium))
-                        Spacer()
+                        Spacer(minLength: 0)
                     }
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12)
@@ -103,6 +103,7 @@ struct SettingsView: View {
                         pane == item ? RamblrTheme.selection : Color.clear,
                         in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                     )
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -213,14 +214,20 @@ struct SettingsView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.white)
                     Spacer()
-                    Button("Change") {
+                    Button {
                         draftAPIKey = ""
                         isEditingAPIKey = true
+                    } label: {
+                        Text("Change")
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RamblrTheme.elevated,
+                                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            )
+                            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                     .buttonStyle(.plain)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(RamblrTheme.elevated, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .foregroundStyle(.white)
                 }
                 .padding(.horizontal, 14)
@@ -384,16 +391,21 @@ struct SettingsView: View {
         actionTitle: String,
         action: @escaping () -> Void
     ) -> some View {
-        HStack {
-            Image(systemName: granted ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(granted ? RamblrTheme.levelActive : .orange)
-            Text(title)
-                .foregroundStyle(.white)
-            Spacer()
-            Button(actionTitle, action: action)
-                .disabled(granted)
+        Button(action: action) {
+            HStack {
+                Image(systemName: granted ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(granted ? RamblrTheme.levelActive : .orange)
+                Text(title)
+                    .foregroundStyle(.white)
+                Spacer(minLength: 0)
+                Text(actionTitle)
+                    .foregroundStyle(granted ? RamblrTheme.tertiaryText : RamblrTheme.accent)
+            }
+            .padding(16)
+            .contentShape(Rectangle())
         }
-        .padding(16)
+        .buttonStyle(.plain)
+        .disabled(granted)
     }
 
     private func microphoneSubtitle(for name: String) -> String {

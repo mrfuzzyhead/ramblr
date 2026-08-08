@@ -33,7 +33,7 @@ final class RecordingHUDPresenter {
         switch state {
         case .idle:
             hide()
-        case .preparing, .recording, .processing, .complete:
+        case .preparing, .recording, .processing, .complete, .notice:
             model.state = state
             model.elapsed = elapsed
             show()
@@ -42,8 +42,7 @@ final class RecordingHUDPresenter {
 
     private func show() {
         if panel == nil {
-            let root = RecordingHUDView(model: model)
-                .preferredColorScheme(.dark)
+            let root = RecordingHUDRoot(model: model)
             let hosting = NSHostingView(rootView: root)
             hosting.frame = NSRect(origin: .zero, size: Self.hudSize)
 
@@ -84,6 +83,15 @@ final class RecordingHUDPresenter {
     }
 }
 
+private struct RecordingHUDRoot: View {
+    @ObservedObject var model: RecordingHUDModel
+
+    var body: some View {
+        RecordingHUDView(model: model)
+            .preferredColorScheme(.dark)
+    }
+}
+
 @MainActor
 private final class RecordingHUDModel: ObservableObject {
     @Published var state: DictationState = .idle
@@ -94,6 +102,17 @@ private struct RecordingHUDView: View {
     @ObservedObject var model: RecordingHUDModel
 
     var body: some View {
+        Group {
+            if case .notice(let message) = model.state {
+                noticeContent(message)
+            } else {
+                statusContent
+            }
+        }
+        .padding(4)
+    }
+
+    private var statusContent: some View {
         HStack(spacing: 10) {
             indicator
                 .frame(width: 8, height: 8)
@@ -114,13 +133,32 @@ private struct RecordingHUDView: View {
         .padding(.vertical, 12)
         .frame(width: 220, height: 44)
         .background(RamblrTheme.hudBackground, in: Capsule())
-        .frame(width: 228, height: 52)
+        .frame(width: 220, height: 44)
+    }
+
+    private func noticeContent(_ message: String) -> some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(Color.white.opacity(0.25))
+                .frame(width: 8, height: 8)
+
+            Text(message)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(width: 220, height: 44)
+        .background(RamblrTheme.hudBackground, in: Capsule())
     }
 
     @ViewBuilder
     private var indicator: some View {
         switch model.state {
-        case .idle:
+        case .idle, .notice:
             EmptyView()
         case .preparing:
             Circle()
@@ -141,7 +179,7 @@ private struct RecordingHUDView: View {
 
     private var label: String {
         switch model.state {
-        case .idle:
+        case .idle, .notice:
             return ""
         case .preparing:
             return "Preparing"
@@ -156,7 +194,7 @@ private struct RecordingHUDView: View {
 
     private var timeLabel: String {
         switch model.state {
-        case .preparing, .idle:
+        case .preparing, .idle, .notice:
             return "--:--"
         case .recording, .processing, .complete:
             let total = max(0, Int(model.elapsed.rounded()))

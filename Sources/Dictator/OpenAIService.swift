@@ -18,7 +18,7 @@ enum OpenAIServiceError: LocalizedError {
             if body.isEmpty { return "OpenAI request failed (\(code))." }
             return "OpenAI request failed (\(code)): \(body)"
         case .emptyTranscription:
-            return "Transcription was empty."
+            return "Transcription was empty"
         case .emptyCompose:
             return "Compose returned empty email text."
         case .fileReadFailed:

@@ -33,68 +33,53 @@ enum FocusPasteService {
         }
     }
 
+    /// Returns whether we should attempt to paste into the frontmost app.
+    ///
+    /// Chromium/Electron often return no focused AX element even when a caret is
+    /// active. In that case we optimistically paste (text is already on the clipboard).
     static func hasEditableFocus() -> Bool {
         guard isAccessibilityTrusted(prompt: false) else {
             // Without Accessibility we cannot detect focus; treat as editable so paste is still attempted.
             return true
         }
 
-        let system = AXUIElementCreateSystemWide()
-        var focusedObject: CFTypeRef?
-        let focusedStatus = AXUIElementCopyAttributeValue(
-            system,
-            kAXFocusedUIElementAttribute as CFString,
-            &focusedObject
-        )
-        guard focusedStatus == .success, let focused = focusedObject else {
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else {
             return false
         }
 
-        let element = focused as! AXUIElement
+        // Don't paste into Ramblr itself unless a genuine text field is focused.
+        let isSelf = frontApp.bundleIdentifier == Bundle.main.bundleIdentifier
+            || frontApp.processIdentifier == ProcessInfo.processInfo.processIdentifier
 
-        if boolAttribute(element, kAXFocusedAttribute as CFString) == false {
+        enableChromiumAccessibilityIfNeeded(for: frontApp)
+
+        guard let focused = copyFocusedElement() else {
+            // Nil focus is common for Chrome/Electron web fields — attempt paste
+            // unless Ramblr is frontmost.
+            return !isSelf
+        }
+
+        if isEditableElement(focused) {
+            return true
+        }
+
+        // Walk ancestors; browsers often focus a child/container around the field.
+        var current: AXUIElement? = focused
+        for _ in 0..<6 {
+            guard let element = current, let parent = copyParent(element) else { break }
+            if isEditableElement(parent) {
+                return true
+            }
+            current = parent
+        }
+
+        if let role = stringAttribute(focused, kAXRoleAttribute as CFString),
+           Self.nonEditableRoles.contains(role) {
             return false
         }
 
-        if let role = stringAttribute(element, kAXRoleAttribute as CFString) {
-            let editableRoles: Set<String> = [
-                kAXTextFieldRole as String,
-                kAXTextAreaRole as String,
-                kAXComboBoxRole as String,
-                "AXSearchField"
-            ]
-            if editableRoles.contains(role) {
-                return true
-            }
-        }
-
-        if boolAttribute(element, "AXIsEditable" as CFString) == true {
-            return true
-        }
-
-        if let attrs = attributeNames(element),
-           attrs.contains(kAXValueAttribute as String),
-           attrs.contains(kAXSelectedTextAttribute as String)
-            || attrs.contains(kAXSelectedTextRangeAttribute as String) {
-            // Common pattern for text-like controls and many web fields.
-            if let role = stringAttribute(element, kAXRoleAttribute as CFString),
-               role == kAXGroupRole as String || role == "AXWebArea" {
-                return true
-            }
-            if stringAttribute(element, kAXRoleAttribute as CFString) == "AXTextField"
-                || stringAttribute(element, kAXRoleAttribute as CFString) == "AXTextArea" {
-                return true
-            }
-        }
-
-        // Chromium / Electron contenteditable often reports AXWebArea or AXGroup with settable value.
-        var settable: DarwinBoolean = false
-        if AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success,
-           settable.boolValue {
-            return true
-        }
-
-        return false
+        // Ambiguous role with a focused element in another app — attempt paste.
+        return !isSelf
     }
 
     /// Copies text and synthesizes ⌘V into the frontmost app.
@@ -110,6 +95,117 @@ enum FocusPasteService {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+
+    private static let editableRoles: Set<String> = [
+        kAXTextFieldRole as String,
+        kAXTextAreaRole as String,
+        kAXComboBoxRole as String,
+        "AXSearchField",
+        "AXWebArea",
+        "AXTextEntry",
+        "AXDocument",
+    ]
+
+    private static let nonEditableRoles: Set<String> = [
+        kAXButtonRole as String,
+        kAXCheckBoxRole as String,
+        kAXRadioButtonRole as String,
+        kAXStaticTextRole as String,
+        kAXImageRole as String,
+        kAXMenuItemRole as String,
+        "AXTab",
+        "AXToolbar",
+        "AXLink",
+        "AXHeading",
+        "AXValueIndicator",
+        "AXSlider",
+        "AXProgressIndicator",
+    ]
+
+    private static func copyFocusedElement() -> AXUIElement? {
+        let system = AXUIElementCreateSystemWide()
+        var focusedObject: CFTypeRef?
+        let focusedStatus = AXUIElementCopyAttributeValue(
+            system,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedObject
+        )
+        guard focusedStatus == .success, let focused = focusedObject else {
+            return nil
+        }
+        return (focused as! AXUIElement)
+    }
+
+    private static func isEditableElement(_ element: AXUIElement) -> Bool {
+        if let role = stringAttribute(element, kAXRoleAttribute as CFString),
+           editableRoles.contains(role) {
+            return true
+        }
+
+        if let subrole = stringAttribute(element, kAXSubroleAttribute as CFString),
+           subrole == "AXSearchField"
+            || subrole == "AXTextFieldEntry"
+            || subrole == "AXSecureTextField" {
+            return true
+        }
+
+        if boolAttribute(element, "AXIsEditable" as CFString) == true
+            || boolAttribute(element, "AXEditable" as CFString) == true {
+            return true
+        }
+
+        var settable: DarwinBoolean = false
+        if AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success,
+           settable.boolValue {
+            return true
+        }
+
+        if let attrs = attributeNames(element),
+           attrs.contains(kAXSelectedTextAttribute as String)
+            || attrs.contains(kAXSelectedTextRangeAttribute as String)
+            || attrs.contains(kAXInsertionPointLineNumberAttribute as String) {
+            if let role = stringAttribute(element, kAXRoleAttribute as CFString),
+               Self.nonEditableRoles.contains(role) {
+                return false
+            }
+            return true
+        }
+
+        return false
+    }
+
+    /// Chrome/Electron lazily build their AX tree until an assistive client opts in.
+    private static func enableChromiumAccessibilityIfNeeded(for app: NSRunningApplication) {
+        let pid = app.processIdentifier
+        let appElement = AXUIElementCreateApplication(pid)
+        let trueValue = kCFBooleanTrue as CFTypeRef
+
+        // Prefer the narrower Chromium flag; also try Enhanced User Interface.
+        _ = AXUIElementSetAttributeValue(
+            appElement,
+            "AXManualAccessibility" as CFString,
+            trueValue
+        )
+        _ = AXUIElementSetAttributeValue(
+            appElement,
+            "AXEnhancedUserInterface" as CFString,
+            trueValue
+        )
+    }
+
+    private static func copyParent(_ element: AXUIElement) -> AXUIElement? {
+        var parentObject: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXParentAttribute as CFString,
+            &parentObject
+        ) == .success,
+            let parent = parentObject
+        else {
+            return nil
+        }
+        return (parent as! AXUIElement)
     }
 
     private static func synthesizePaste() {

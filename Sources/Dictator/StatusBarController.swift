@@ -247,7 +247,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         guard let button = statusItem.button else { return }
         let symbol: String
         switch state {
-        case .idle, .complete:
+        case .idle, .complete, .notice:
             symbol = "mic.fill"
         case .preparing:
             symbol = "mic"
