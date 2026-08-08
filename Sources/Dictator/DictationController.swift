@@ -13,7 +13,7 @@ enum DictationState: Equatable {
 
 enum CaptureMode: Equatable {
     case dictation
-    case compose
+    case dictateAndSend
 }
 
 @MainActor
@@ -45,10 +45,10 @@ final class DictationController: ObservableObject {
         installHotKeys()
 
         settings.$shortcut
-            .combineLatest(settings.$composeShortcut)
+            .combineLatest(settings.$dictateAndSendShortcut)
             .dropFirst()
-            .sink { [weak self] dictation, compose in
-                self?.hotKeyManager?.update(dictation: dictation, compose: compose)
+            .sink { [weak self] dictation, dictateAndSend in
+                self?.hotKeyManager?.update(dictation: dictation, dictateAndSend: dictateAndSend)
             }
             .store(in: &cancellables)
     }
@@ -61,13 +61,13 @@ final class DictationController: ObservableObject {
         hotKeyManager?.stop()
         let manager = HotKeyManager(
             dictation: settings.shortcut,
-            compose: settings.composeShortcut
+            dictateAndSend: settings.dictateAndSendShortcut
         )
         manager.onBegin = { [weak self] action in
-            self?.beginRecording(mode: action == .compose ? .compose : .dictation)
+            self?.beginRecording(mode: action == .dictateAndSend ? .dictateAndSend : .dictation)
         }
         manager.onSwitch = { [weak self] action in
-            self?.mode = action == .compose ? .compose : .dictation
+            self?.mode = action == .dictateAndSend ? .dictateAndSend : .dictation
         }
         manager.onEnd = { [weak self] _ in
             self?.endRecording()
@@ -97,30 +97,38 @@ final class DictationController: ObservableObject {
         recordingElapsed = 0
         state = .preparing
 
+        if MicrophoneDeviceManager.permissionGranted() {
+            finishBeginRecording()
+            return
+        }
+
         Task {
-            if !MicrophoneDeviceManager.permissionGranted() {
-                let granted = await MicrophoneDeviceManager.requestPermission()
-                guard granted else {
-                    lastError = MicrophoneError.permissionDenied.localizedDescription
-                    ToastPresenter.shared.show(message: lastError ?? "Microphone permission denied.")
-                    state = .idle
-                    return
-                }
+            let granted = await MicrophoneDeviceManager.requestPermission()
+            guard granted else {
+                lastError = MicrophoneError.permissionDenied.localizedDescription
+                ToastPresenter.shared.show(message: lastError ?? "Microphone permission denied.")
+                state = .idle
+                return
             }
 
             // Bail if the user already released during preparing.
             guard state == .preparing else { return }
+            finishBeginRecording()
+        }
+    }
 
-            do {
-                try recorder.start(microphoneUID: settings.microphoneUID)
-                recordingStartedAt = Date()
-                state = .recording
-                startElapsedTimer()
-            } catch {
-                lastError = error.localizedDescription
-                ToastPresenter.shared.show(message: error.localizedDescription)
-                state = .idle
-            }
+    private func finishBeginRecording() {
+        guard state == .preparing else { return }
+
+        do {
+            try recorder.start(microphoneUID: settings.microphoneUID)
+            recordingStartedAt = Date()
+            state = .recording
+            startElapsedTimer()
+        } catch {
+            lastError = error.localizedDescription
+            ToastPresenter.shared.show(message: error.localizedDescription)
+            state = .idle
         }
     }
 
@@ -161,10 +169,7 @@ final class DictationController: ObservableObject {
             do {
                 let apiKey = settings.apiKey
                 let requestStarted = Date()
-                var text = try await openAI.transcribe(fileURL: fileURL, apiKey: apiKey)
-                if captureMode == .compose {
-                    text = try await openAI.composeEmail(from: text, apiKey: apiKey)
-                }
+                let text = try await openAI.transcribe(fileURL: fileURL, apiKey: apiKey)
                 let transcriptionMs = max(
                     0,
                     Int((Date().timeIntervalSince(requestStarted) * 1000).rounded())
@@ -174,14 +179,18 @@ final class DictationController: ObservableObject {
                 FocusPasteService.copyToClipboard(text)
 
                 if editable {
-                    FocusPasteService.paste(text)
+                    if captureMode == .dictateAndSend {
+                        FocusPasteService.pasteAndSend(text)
+                    } else {
+                        FocusPasteService.paste(text)
+                    }
                 }
 
                 settings.prependHistory(
                     TranscriptionEntry(
                         text: text,
                         pasted: editable,
-                        kind: captureMode == .compose ? .compose : .dictation,
+                        kind: captureMode == .dictateAndSend ? .dictateAndSend : .dictation,
                         audioDurationMs: audioDurationMs,
                         transcriptionMs: transcriptionMs
                     )

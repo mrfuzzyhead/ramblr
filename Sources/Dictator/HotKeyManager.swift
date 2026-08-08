@@ -4,7 +4,7 @@ import Foundation
 
 enum HotKeyAction: Equatable {
     case dictation
-    case compose
+    case dictateAndSend
 }
 
 /// Global hold-to-talk hotkeys via CGEvent tap.
@@ -15,32 +15,32 @@ final class HotKeyManager {
     var onSwitch: ((HotKeyAction) -> Void)?
 
     private var dictationShortcut: KeyboardShortcut
-    private var composeShortcut: KeyboardShortcut
+    private var dictateAndSendShortcut: KeyboardShortcut
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var localMonitor: Any?
     private var permissionTimer: Timer?
     private var activeAction: HotKeyAction?
     private var dictationModifiersDown = false
-    private var composeKeyDown = false
+    private var dictateAndSendKeyDown = false
     private let lock = NSLock()
 
-    init(dictation: KeyboardShortcut, compose: KeyboardShortcut) {
+    init(dictation: KeyboardShortcut, dictateAndSend: KeyboardShortcut) {
         self.dictationShortcut = dictation
-        self.composeShortcut = compose
+        self.dictateAndSendShortcut = dictateAndSend
     }
 
     deinit {
         stop()
     }
 
-    func update(dictation: KeyboardShortcut, compose: KeyboardShortcut) {
+    func update(dictation: KeyboardShortcut, dictateAndSend: KeyboardShortcut) {
         lock.lock()
         dictationShortcut = dictation
-        composeShortcut = compose
+        dictateAndSendShortcut = dictateAndSend
         activeAction = nil
         dictationModifiersDown = false
-        composeKeyDown = false
+        dictateAndSendKeyDown = false
         lock.unlock()
     }
 
@@ -73,7 +73,7 @@ final class HotKeyManager {
         lock.lock()
         activeAction = nil
         dictationModifiersDown = false
-        composeKeyDown = false
+        dictateAndSendKeyDown = false
         lock.unlock()
     }
 
@@ -156,36 +156,36 @@ final class HotKeyManager {
     ) -> Bool {
         lock.lock()
         let dictation = dictationShortcut
-        let compose = composeShortcut
+        let dictateAndSend = dictateAndSendShortcut
         defer { lock.unlock() }
 
         let normalizedFlags = KeyboardShortcut.normalizeFlags(flags)
 
         switch type {
         case .keyDown:
-            if let composeKey = compose.keyCode, keyCode == composeKey {
-                let modsMatch = normalizedFlags == compose.modifierFlags
+            if let sendKey = dictateAndSend.keyCode, keyCode == sendKey {
+                let modsMatch = normalizedFlags == dictateAndSend.modifierFlags
                 if modsMatch {
                     if isRepeat {
                         return true
                     }
-                    composeKeyDown = true
+                    dictateAndSendKeyDown = true
                     if activeAction == .dictation {
-                        activeAction = .compose
+                        activeAction = .dictateAndSend
                         DispatchQueue.main.async { [weak self] in
-                            self?.onSwitch?(.compose)
+                            self?.onSwitch?(.dictateAndSend)
                         }
                     } else if activeAction == nil {
-                        // Prefer compose when its modifiers are a superset match of dictation.
+                        // Prefer dictate-and-send when its modifiers are a superset match of dictation.
                         if dictation.keyCode == nil,
-                           dictation.modifierFlags.isSubset(of: compose.modifierFlags),
+                           dictation.modifierFlags.isSubset(of: dictateAndSend.modifierFlags),
                            normalizedFlags == dictation.modifierFlags
-                            || normalizedFlags == compose.modifierFlags {
+                            || normalizedFlags == dictateAndSend.modifierFlags {
                             dictationModifiersDown = true
                         }
-                        activeAction = .compose
+                        activeAction = .dictateAndSend
                         DispatchQueue.main.async { [weak self] in
-                            self?.onBegin?(.compose)
+                            self?.onBegin?(.dictateAndSend)
                         }
                     }
                     return true
@@ -209,13 +209,13 @@ final class HotKeyManager {
             return false
 
         case .keyUp:
-            if let composeKey = compose.keyCode, keyCode == composeKey, composeKeyDown {
-                composeKeyDown = false
-                if activeAction == .compose {
+            if let sendKey = dictateAndSend.keyCode, keyCode == sendKey, dictateAndSendKeyDown {
+                dictateAndSendKeyDown = false
+                if activeAction == .dictateAndSend {
                     activeAction = nil
                     dictationModifiersDown = false
                     DispatchQueue.main.async { [weak self] in
-                        self?.onEnd?(.compose)
+                        self?.onEnd?(.dictateAndSend)
                     }
                     return true
                 }
@@ -235,7 +235,7 @@ final class HotKeyManager {
             // Modifier-only dictation (e.g. Fn+Ctrl).
             if dictation.keyCode == nil {
                 let matches = normalizedFlags == dictation.modifierFlags
-                if matches && !dictationModifiersDown && activeAction == nil && !composeKeyDown {
+                if matches && !dictationModifiersDown && activeAction == nil && !dictateAndSendKeyDown {
                     dictationModifiersDown = true
                     activeAction = .dictation
                     DispatchQueue.main.async { [weak self] in
@@ -243,11 +243,11 @@ final class HotKeyManager {
                     }
                 } else if dictationModifiersDown || activeAction != nil {
                     let stillHeld: Bool
-                    if activeAction == .compose, let composeKey = compose.keyCode {
-                        // Compose ends via keyUp on its key, but modifiers releasing also ends it.
+                    if activeAction == .dictateAndSend, let sendKey = dictateAndSend.keyCode {
+                        // Dictate-and-send ends via keyUp on its key, but modifiers releasing also ends it.
                         stillHeld = dictation.modifierFlags.isSubset(of: normalizedFlags)
-                            || compose.modifierFlags.isSubset(of: normalizedFlags)
-                        _ = composeKey
+                            || dictateAndSend.modifierFlags.isSubset(of: normalizedFlags)
+                        _ = sendKey
                     } else {
                         stillHeld = matches
                     }
@@ -256,7 +256,7 @@ final class HotKeyManager {
                         let ending = activeAction ?? .dictation
                         activeAction = nil
                         dictationModifiersDown = false
-                        composeKeyDown = false
+                        dictateAndSendKeyDown = false
                         DispatchQueue.main.async { [weak self] in
                             self?.onEnd?(ending)
                         }
@@ -265,10 +265,10 @@ final class HotKeyManager {
                     }
                 }
             } else if let action = activeAction {
-                let required = (action == .compose ? compose : dictation).modifierFlags
+                let required = (action == .dictateAndSend ? dictateAndSend : dictation).modifierFlags
                 if !required.isEmpty && required.intersection(normalizedFlags) != required {
                     activeAction = nil
-                    composeKeyDown = false
+                    dictateAndSendKeyDown = false
                     dictationModifiersDown = false
                     DispatchQueue.main.async { [weak self] in
                         self?.onEnd?(action)

@@ -16,8 +16,14 @@ final class AudioRecorder {
             throw MicrophoneError.permissionDenied
         }
 
-        previousDefaultUID = MicrophoneDeviceManager.defaultInputDeviceUID()
-        try MicrophoneDeviceManager.setDefaultInputDevice(uid: microphoneUID)
+        previousDefaultUID = nil
+        if let microphoneUID {
+            let currentUID = MicrophoneDeviceManager.defaultInputDeviceUID()
+            if microphoneUID != currentUID {
+                previousDefaultUID = currentUID
+                try MicrophoneDeviceManager.setDefaultInputDevice(uid: microphoneUID)
+            }
+        }
 
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ramblr-\(UUID().uuidString).m4a")
@@ -33,6 +39,7 @@ final class AudioRecorder {
         let recorder = try AVAudioRecorder(url: url, settings: settings)
         recorder.isMeteringEnabled = false
         guard recorder.record() else {
+            restorePreviousDefaultInputIfNeeded()
             throw MicrophoneError.recordingFailed("Could not start audio recording.")
         }
         self.recorder = recorder
@@ -47,10 +54,7 @@ final class AudioRecorder {
         let url = outputURL
         outputURL = nil
 
-        if let previous = previousDefaultUID {
-            try? MicrophoneDeviceManager.setDefaultInputDevice(uid: previous)
-        }
-        previousDefaultUID = nil
+        restorePreviousDefaultInputIfNeeded()
         guard let url else { return nil }
         return (url, durationMs)
     }
@@ -60,5 +64,10 @@ final class AudioRecorder {
             try? FileManager.default.removeItem(at: result.url)
         }
     }
-}
 
+    private func restorePreviousDefaultInputIfNeeded() {
+        guard let previous = previousDefaultUID else { return }
+        previousDefaultUID = nil
+        _ = try? MicrophoneDeviceManager.setDefaultInputDevice(uid: previous)
+    }
+}

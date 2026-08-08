@@ -131,13 +131,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         shortcutItem.isEnabled = false
         menu.addItem(shortcutItem)
 
-        let composeItem = NSMenuItem(
-            title: "Compose: \(settings.composeShortcut.displayString)",
+        let dictateAndSendItem = NSMenuItem(
+            title: "Dictate & Send: \(settings.dictateAndSendShortcut.displayString)",
             action: nil,
             keyEquivalent: ""
         )
-        composeItem.isEnabled = false
-        menu.addItem(composeItem)
+        dictateAndSendItem.isEnabled = false
+        menu.addItem(dictateAndSendItem)
 
         menu.addItem(.separator())
 
@@ -234,7 +234,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             .store(in: &cancellables)
 
         settings.$shortcut
-            .combineLatest(settings.$composeShortcut)
+            .combineLatest(settings.$dictateAndSendShortcut)
             .receive(on: RunLoop.main)
             .sink { [weak self] dictationShortcut, _ in
                 self?.statusItem.button?.toolTip =

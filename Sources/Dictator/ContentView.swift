@@ -146,19 +146,19 @@ struct ContentView: View {
                 .frame(width: 58, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 6) {
-                if entry.kind == .compose {
-                    Text("Compose")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(RamblrTheme.accent, in: Capsule())
-                }
                 Text(entry.text)
                     .font(.system(size: 14))
                     .foregroundStyle(.white)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if entry.kind == .dictateAndSend {
+                    Text("Sent")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(RamblrTheme.secondaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.white.opacity(0.14), in: Capsule())
+                }
             }
 
             HStack(spacing: 4) {

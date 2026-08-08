@@ -91,6 +91,18 @@ enum FocusPasteService {
         }
     }
 
+    /// Pastes text, then presses Return/Enter to send.
+    static func pasteAndSend(_ text: String) {
+        _ = requestPostEventAccess()
+        copyToClipboard(text)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            synthesizePaste()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                synthesizeReturn()
+            }
+        }
+    }
+
     static func copyToClipboard(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -218,6 +230,15 @@ enum FocusPasteService {
 
         keyVDown?.post(tap: .cghidEventTap)
         keyVUp?.post(tap: .cghidEventTap)
+    }
+
+    private static func synthesizeReturn() {
+        let source = CGEventSource(stateID: .hidSystemState)
+        // kVK_Return
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x24, keyDown: true)
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x24, keyDown: false)
+        keyDown?.post(tap: .cghidEventTap)
+        keyUp?.post(tap: .cghidEventTap)
     }
 
     private static func stringAttribute(_ element: AXUIElement, _ attribute: CFString) -> String? {

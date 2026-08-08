@@ -20,7 +20,7 @@ final class MicrophoneLevelMonitor: ObservableObject {
         }
 
         if let deviceUID {
-            try? MicrophoneDeviceManager.setDefaultInputDevice(uid: deviceUID)
+            _ = try? MicrophoneDeviceManager.setDefaultInputDevice(uid: deviceUID)
         }
 
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in

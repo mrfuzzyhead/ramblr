@@ -2,7 +2,23 @@ import Foundation
 
 enum TranscriptionKind: String, Codable, Equatable, Sendable {
     case dictation
-    case compose
+    case dictateAndSend
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        switch raw {
+        case Self.dictateAndSend.rawValue, "compose":
+            self = .dictateAndSend
+        default:
+            self = .dictation
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 struct TranscriptionEntry: Identifiable, Codable, Equatable, Sendable {

@@ -143,9 +143,9 @@ struct SettingsView: View {
                 )
                 Divider().background(RamblrTheme.border)
                 shortcutRow(
-                    title: "Compose Hotkey",
-                    subtitle: "Press and hold to speak, let go to paste an email",
-                    shortcut: $settings.composeShortcut
+                    title: "Dictate and Send Hotkey",
+                    subtitle: "Hold to speak, release to paste and send",
+                    shortcut: $settings.dictateAndSendShortcut
                 )
             }
         }

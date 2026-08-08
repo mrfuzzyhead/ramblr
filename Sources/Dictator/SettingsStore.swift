@@ -7,7 +7,8 @@ final class SettingsStore: ObservableObject {
 
     private enum Keys {
         static let shortcut = "shortcut"
-        static let composeShortcut = "composeShortcut"
+        static let dictateAndSendShortcut = "dictateAndSendShortcut"
+        static let legacyComposeShortcut = "composeShortcut"
         static let microphoneUID = "microphoneUID"
         static let history = "history"
         static let seededAPIKey = "seededAPIKey"
@@ -26,8 +27,8 @@ final class SettingsStore: ObservableObject {
         didSet { persistShortcut() }
     }
 
-    @Published var composeShortcut: KeyboardShortcut {
-        didSet { persistComposeShortcut() }
+    @Published var dictateAndSendShortcut: KeyboardShortcut {
+        didSet { persistDictateAndSendShortcut() }
     }
 
     @Published var microphoneUID: String? {
@@ -60,11 +61,14 @@ final class SettingsStore: ObservableObject {
             shortcut = .defaultDictationShortcut
         }
 
-        if let data = defaults.data(forKey: Keys.composeShortcut),
+        if let data = defaults.data(forKey: Keys.dictateAndSendShortcut),
            let decoded = try? decoder.decode(KeyboardShortcut.self, from: data) {
-            composeShortcut = decoded
+            dictateAndSendShortcut = decoded
+        } else if let data = defaults.data(forKey: Keys.legacyComposeShortcut),
+                  let decoded = try? decoder.decode(KeyboardShortcut.self, from: data) {
+            dictateAndSendShortcut = decoded
         } else {
-            composeShortcut = .defaultComposeShortcut
+            dictateAndSendShortcut = .defaultDictateAndSendShortcut
         }
 
         microphoneUID = defaults.string(forKey: Keys.microphoneUID)
@@ -104,9 +108,9 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    private func persistComposeShortcut() {
-        if let data = try? encoder.encode(composeShortcut) {
-            defaults.set(data, forKey: Keys.composeShortcut)
+    private func persistDictateAndSendShortcut() {
+        if let data = try? encoder.encode(dictateAndSendShortcut) {
+            defaults.set(data, forKey: Keys.dictateAndSendShortcut)
         }
     }
 

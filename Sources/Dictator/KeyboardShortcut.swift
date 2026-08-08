@@ -13,8 +13,8 @@ struct KeyboardShortcut: Codable, Equatable, Hashable, Sendable {
         modifiers: NSEvent.ModifierFlags([.function, .control]).rawValue
     )
 
-    /// Fn + Control + C — hold to compose an email.
-    static let defaultComposeShortcut = KeyboardShortcut(
+    /// Fn + Control + C — hold to dictate, then paste and send.
+    static let defaultDictateAndSendShortcut = KeyboardShortcut(
         keyCode: UInt16(kVK_ANSI_C),
         modifiers: NSEvent.ModifierFlags([.function, .control]).rawValue
     )

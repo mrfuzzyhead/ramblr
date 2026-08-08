@@ -5,8 +5,8 @@ global shortcut, speak, and release — Ramblr transcribes with OpenAI
 `gpt-transcribe`, then pastes into the focused field (or copies to the clipboard
 with a toast if nothing is focused).
 
-Compose mode holds a second shortcut, rewrites the transcript into a professional
-but casual email body with `gpt-5.6-luna`, and pastes the result.
+Dictate and Send uses a second shortcut: same hold-to-talk flow, then pastes the
+transcript and presses Enter to send.
 
 ## Requirements
 
@@ -27,7 +27,7 @@ make run
 
 Default shortcuts:
 - **Dictation:** Fn + ⌃ (hold to record, release to paste)
-- **Compose:** Fn + ⌃ + C (hold to record, release to paste an email)
+- **Dictate and Send:** Fn + ⌃ + C (hold to record, release to paste and send)
 
 ## Build
 

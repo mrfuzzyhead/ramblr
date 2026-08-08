@@ -5,7 +5,6 @@ enum OpenAIServiceError: LocalizedError {
     case invalidResponse
     case httpStatus(Int, String)
     case emptyTranscription
-    case emptyCompose
     case fileReadFailed
 
     var errorDescription: String? {
@@ -19,8 +18,6 @@ enum OpenAIServiceError: LocalizedError {
             return "OpenAI request failed (\(code)): \(body)"
         case .emptyTranscription:
             return "Transcription was empty"
-        case .emptyCompose:
-            return "Compose returned empty email text."
         case .fileReadFailed:
             return "Could not read the recorded audio file."
         }
@@ -29,18 +26,6 @@ enum OpenAIServiceError: LocalizedError {
 
 struct OpenAIService: Sendable {
     static let transcriptionModel = "gpt-transcribe"
-    static let composeModel = "gpt-5.6-luna"
-
-    private static let composeSystemPrompt = """
-    You convert spoken dictation into an email body.
-    Tone: professional but casual.
-    Rules:
-    - Output only the email body text.
-    - Do not include a subject line.
-    - Do not wrap the result in quotes or markdown.
-    - Preserve the speaker's intent and key details.
-    - Use clear paragraphs where helpful.
-    """
 
     private let session: URLSession
 
@@ -80,34 +65,6 @@ struct OpenAIService: Sendable {
         let decoded = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
         let text = decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw OpenAIServiceError.emptyTranscription }
-        return text
-    }
-
-    func composeEmail(from transcript: String, apiKey: String) async throws -> String {
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedKey.isEmpty else { throw OpenAIServiceError.missingAPIKey }
-
-        let payload: [String: Any] = [
-            "model": Self.composeModel,
-            "messages": [
-                ["role": "system", "content": Self.composeSystemPrompt],
-                ["role": "user", "content": transcript]
-            ]
-        ]
-
-        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(trimmedKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-
-        let (data, response) = try await session.data(for: request)
-        try Self.validate(response: response, data: data)
-
-        let decoded = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
-        let text = decoded.choices.first?.message.content?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !text.isEmpty else { throw OpenAIServiceError.emptyCompose }
         return text
     }
 
@@ -151,16 +108,4 @@ struct OpenAIService: Sendable {
 
 private struct TranscriptionResponse: Decodable {
     let text: String
-}
-
-private struct ChatCompletionResponse: Decodable {
-    struct Choice: Decodable {
-        struct Message: Decodable {
-            let content: String?
-        }
-
-        let message: Message
-    }
-
-    let choices: [Choice]
 }

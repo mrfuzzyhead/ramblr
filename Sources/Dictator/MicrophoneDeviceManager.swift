@@ -9,7 +9,129 @@ struct MicrophoneDevice: Identifiable, Hashable, Sendable {
 }
 
 enum MicrophoneDeviceManager {
+    private static let cacheLock = NSLock()
+    private static var deviceIDByUID: [String: AudioDeviceID] = [:]
+
     static func listInputDevices() -> [MicrophoneDevice] {
+        let deviceIDs = allAudioDeviceIDs()
+        var devices: [MicrophoneDevice] = []
+        var cache: [String: AudioDeviceID] = [:]
+
+        for deviceID in deviceIDs {
+            guard inputChannelCount(for: deviceID) > 0 else { continue }
+            let name = deviceName(for: deviceID) ?? "Microphone \(deviceID)"
+            let uid = deviceUID(for: deviceID) ?? String(deviceID)
+            cache[uid] = deviceID
+            devices.append(MicrophoneDevice(id: uid, name: name, audioDeviceID: deviceID))
+        }
+
+        replaceCache(cache)
+        return devices.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    static func defaultInputDeviceUID() -> String? {
+        guard let deviceID = defaultInputDeviceID() else { return nil }
+        return deviceUID(for: deviceID)
+    }
+
+    /// Sets the system default input device when needed.
+    /// - Returns: `true` when the system default was changed.
+    /// - Note: `uid == nil` means “use system default” and is always a no-op.
+    @discardableResult
+    static func setDefaultInputDevice(uid: String?) throws -> Bool {
+        guard let uid else { return false }
+
+        if defaultInputDeviceUID() == uid {
+            return false
+        }
+
+        let deviceID: AudioDeviceID
+        if let resolved = audioDeviceID(forUID: uid) {
+            deviceID = resolved
+        } else if let fallback = firstInputDeviceID() {
+            if deviceUID(for: fallback) == defaultInputDeviceUID() {
+                return false
+            }
+            deviceID = fallback
+        } else {
+            throw MicrophoneError.noInputDevices
+        }
+
+        try applyDefaultInputDevice(deviceID)
+        return true
+    }
+
+    static func requestPermission() async -> Bool {
+        await AVCaptureDevice.requestAccess(for: .audio)
+    }
+
+    static func permissionGranted() -> Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
+    /// Resolves a device UID to an `AudioDeviceID`, using a cache when possible.
+    static func audioDeviceID(forUID uid: String) -> AudioDeviceID? {
+        if let cached = cachedDeviceID(forUID: uid), isValidInputDevice(cached) {
+            return cached
+        }
+        return refreshDeviceIDCache()[uid]
+    }
+
+    private static func applyDefaultInputDevice(_ deviceID: AudioDeviceID) throws {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var mutableDeviceID = deviceID
+        let size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            size,
+            &mutableDeviceID
+        )
+        guard status == noErr else {
+            invalidateCache()
+            throw MicrophoneError.failedToSetDevice(status)
+        }
+    }
+
+    private static func defaultInputDeviceID() -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &size,
+            &deviceID
+        ) == noErr, deviceID != 0 else {
+            return nil
+        }
+        return deviceID
+    }
+
+    private static func firstInputDeviceID() -> AudioDeviceID? {
+        for deviceID in allAudioDeviceIDs() {
+            guard inputChannelCount(for: deviceID) > 0 else { continue }
+            if let uid = deviceUID(for: deviceID) {
+                remember(uid: uid, deviceID: deviceID)
+            }
+            return deviceID
+        }
+        return nil
+    }
+
+    private static func allAudioDeviceIDs() -> [AudioDeviceID] {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -39,77 +161,46 @@ enum MicrophoneDeviceManager {
         ) == noErr else {
             return []
         }
+        return deviceIDs
+    }
 
-        var devices: [MicrophoneDevice] = []
-        for deviceID in deviceIDs {
+    private static func refreshDeviceIDCache() -> [String: AudioDeviceID] {
+        var cache: [String: AudioDeviceID] = [:]
+        for deviceID in allAudioDeviceIDs() {
             guard inputChannelCount(for: deviceID) > 0 else { continue }
-            let name = deviceName(for: deviceID) ?? "Microphone \(deviceID)"
-            let uid = deviceUID(for: deviceID) ?? String(deviceID)
-            devices.append(MicrophoneDevice(id: uid, name: name, audioDeviceID: deviceID))
+            guard let uid = deviceUID(for: deviceID) else { continue }
+            cache[uid] = deviceID
         }
-
-        return devices.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        replaceCache(cache)
+        return cache
     }
 
-    static func defaultInputDeviceUID() -> String? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var deviceID = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &address,
-            0,
-            nil,
-            &size,
-            &deviceID
-        ) == noErr else {
-            return nil
-        }
-        return deviceUID(for: deviceID)
+    private static func isValidInputDevice(_ deviceID: AudioDeviceID) -> Bool {
+        inputChannelCount(for: deviceID) > 0
     }
 
-    static func setDefaultInputDevice(uid: String?) throws {
-        let devices = listInputDevices()
-        let target: MicrophoneDevice?
-        if let uid {
-            target = devices.first(where: { $0.id == uid })
-        } else {
-            target = nil
-        }
-        guard let device = target ?? devices.first else {
-            throw MicrophoneError.noInputDevices
-        }
-
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var deviceID = device.audioDeviceID
-        let size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let status = AudioObjectSetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &address,
-            0,
-            nil,
-            size,
-            &deviceID
-        )
-        guard status == noErr else {
-            throw MicrophoneError.failedToSetDevice(status)
-        }
+    private static func cachedDeviceID(forUID uid: String) -> AudioDeviceID? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return deviceIDByUID[uid]
     }
 
-    static func requestPermission() async -> Bool {
-        await AVCaptureDevice.requestAccess(for: .audio)
+    private static func replaceCache(_ cache: [String: AudioDeviceID]) {
+        cacheLock.lock()
+        deviceIDByUID = cache
+        cacheLock.unlock()
     }
 
-    static func permissionGranted() -> Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    private static func invalidateCache() {
+        cacheLock.lock()
+        deviceIDByUID = [:]
+        cacheLock.unlock()
+    }
+
+    private static func remember(uid: String, deviceID: AudioDeviceID) {
+        cacheLock.lock()
+        deviceIDByUID[uid] = deviceID
+        cacheLock.unlock()
     }
 
     private static func inputChannelCount(for deviceID: AudioDeviceID) -> Int {
