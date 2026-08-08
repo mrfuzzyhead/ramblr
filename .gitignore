@@ -10,3 +10,4 @@ xcuserdata/
 *.swp
 *~
 design/*
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
