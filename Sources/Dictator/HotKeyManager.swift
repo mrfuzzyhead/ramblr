@@ -2,32 +2,45 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-/// Global hold-to-talk hotkey via CGEvent tap.
+enum HotKeyAction: Equatable {
+    case dictation
+    case compose
+}
+
+/// Global hold-to-talk hotkeys via CGEvent tap.
 /// Requires Input Monitoring when other apps are focused.
 final class HotKeyManager {
-    var onKeyDown: (() -> Void)?
-    var onKeyUp: (() -> Void)?
+    var onBegin: ((HotKeyAction) -> Void)?
+    var onEnd: ((HotKeyAction) -> Void)?
+    var onSwitch: ((HotKeyAction) -> Void)?
 
-    private var shortcut: KeyboardShortcut
+    private var dictationShortcut: KeyboardShortcut
+    private var composeShortcut: KeyboardShortcut
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var localMonitor: Any?
     private var permissionTimer: Timer?
-    private var isShortcutDown = false
+    private var activeAction: HotKeyAction?
+    private var dictationModifiersDown = false
+    private var composeKeyDown = false
     private let lock = NSLock()
 
-    init(shortcut: KeyboardShortcut) {
-        self.shortcut = shortcut
+    init(dictation: KeyboardShortcut, compose: KeyboardShortcut) {
+        self.dictationShortcut = dictation
+        self.composeShortcut = compose
     }
 
     deinit {
         stop()
     }
 
-    func update(shortcut: KeyboardShortcut) {
+    func update(dictation: KeyboardShortcut, compose: KeyboardShortcut) {
         lock.lock()
-        self.shortcut = shortcut
-        isShortcutDown = false
+        dictationShortcut = dictation
+        composeShortcut = compose
+        activeAction = nil
+        dictationModifiersDown = false
+        composeKeyDown = false
         lock.unlock()
     }
 
@@ -58,7 +71,9 @@ final class HotKeyManager {
         }
 
         lock.lock()
-        isShortcutDown = false
+        activeAction = nil
+        dictationModifiersDown = false
+        composeKeyDown = false
         lock.unlock()
     }
 
@@ -104,8 +119,6 @@ final class HotKeyManager {
             | (1 << CGEventType.keyUp.rawValue)
             | (1 << CGEventType.flagsChanged.rawValue)
 
-        // Prefer HID-level tap so held-key repeats are intercepted before AppKit
-        // can play the system "invalid key" beep. Fall back to session tap.
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
         let tap =
             CGEvent.tapCreate(
@@ -142,53 +155,124 @@ final class HotKeyManager {
         isRepeat: Bool
     ) -> Bool {
         lock.lock()
-        let currentShortcut = shortcut
+        let dictation = dictationShortcut
+        let compose = composeShortcut
         defer { lock.unlock() }
 
         let normalizedFlags = KeyboardShortcut.normalizeFlags(flags)
 
         switch type {
         case .keyDown:
-            // While the shortcut is held, always swallow that key — including
-            // autorepeat. Repeat events sometimes arrive with stripped modifier
-            // flags; if they leak through, macOS plays the warning beep on each
-            // repeat (especially for combos like ⌘⇧D that map to menu items).
-            if isShortcutDown && keyCode == currentShortcut.keyCode {
+            if let composeKey = compose.keyCode, keyCode == composeKey {
+                let modsMatch = normalizedFlags == compose.modifierFlags
+                if modsMatch {
+                    if isRepeat {
+                        return true
+                    }
+                    composeKeyDown = true
+                    if activeAction == .dictation {
+                        activeAction = .compose
+                        DispatchQueue.main.async { [weak self] in
+                            self?.onSwitch?(.compose)
+                        }
+                    } else if activeAction == nil {
+                        // Prefer compose when its modifiers are a superset match of dictation.
+                        if dictation.keyCode == nil,
+                           dictation.modifierFlags.isSubset(of: compose.modifierFlags),
+                           normalizedFlags == dictation.modifierFlags
+                            || normalizedFlags == compose.modifierFlags {
+                            dictationModifiersDown = true
+                        }
+                        activeAction = .compose
+                        DispatchQueue.main.async { [weak self] in
+                            self?.onBegin?(.compose)
+                        }
+                    }
+                    return true
+                }
+            }
+
+            if let dictationKey = dictation.keyCode, keyCode == dictationKey {
+                if activeAction != nil && keyCode == dictationKey {
+                    return true
+                }
+                let matches = normalizedFlags == dictation.modifierFlags
+                guard matches else { return false }
+                if isRepeat { return true }
+                activeAction = .dictation
+                DispatchQueue.main.async { [weak self] in
+                    self?.onBegin?(.dictation)
+                }
                 return true
             }
 
-            let matches = keyCode == currentShortcut.keyCode
-                && normalizedFlags == currentShortcut.modifierFlags
-            guard matches else { return false }
-
-            // Matching orphan repeats: swallow so they cannot beep, but do not
-            // start a new hold session without a real initial keyDown.
-            if isRepeat {
-                return true
-            }
-
-            isShortcutDown = true
-            DispatchQueue.main.async { [weak self] in
-                self?.onKeyDown?()
-            }
-            return true
+            return false
 
         case .keyUp:
-            guard keyCode == currentShortcut.keyCode else { return false }
-            guard isShortcutDown else { return false }
-            isShortcutDown = false
-            DispatchQueue.main.async { [weak self] in
-                self?.onKeyUp?()
+            if let composeKey = compose.keyCode, keyCode == composeKey, composeKeyDown {
+                composeKeyDown = false
+                if activeAction == .compose {
+                    activeAction = nil
+                    dictationModifiersDown = false
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onEnd?(.compose)
+                    }
+                    return true
+                }
             }
-            return true
+
+            if let dictationKey = dictation.keyCode, keyCode == dictationKey, activeAction == .dictation {
+                activeAction = nil
+                DispatchQueue.main.async { [weak self] in
+                    self?.onEnd?(.dictation)
+                }
+                return true
+            }
+
+            return false
 
         case .flagsChanged:
-            guard isShortcutDown else { return false }
-            let required = currentShortcut.modifierFlags
-            if !required.isEmpty && required.intersection(normalizedFlags) != required {
-                isShortcutDown = false
-                DispatchQueue.main.async { [weak self] in
-                    self?.onKeyUp?()
+            // Modifier-only dictation (e.g. Fn+Ctrl).
+            if dictation.keyCode == nil {
+                let matches = normalizedFlags == dictation.modifierFlags
+                if matches && !dictationModifiersDown && activeAction == nil && !composeKeyDown {
+                    dictationModifiersDown = true
+                    activeAction = .dictation
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onBegin?(.dictation)
+                    }
+                } else if dictationModifiersDown || activeAction != nil {
+                    let stillHeld: Bool
+                    if activeAction == .compose, let composeKey = compose.keyCode {
+                        // Compose ends via keyUp on its key, but modifiers releasing also ends it.
+                        stillHeld = dictation.modifierFlags.isSubset(of: normalizedFlags)
+                            || compose.modifierFlags.isSubset(of: normalizedFlags)
+                        _ = composeKey
+                    } else {
+                        stillHeld = matches
+                    }
+
+                    if !stillHeld && activeAction != nil {
+                        let ending = activeAction ?? .dictation
+                        activeAction = nil
+                        dictationModifiersDown = false
+                        composeKeyDown = false
+                        DispatchQueue.main.async { [weak self] in
+                            self?.onEnd?(ending)
+                        }
+                    } else if !matches {
+                        dictationModifiersDown = false
+                    }
+                }
+            } else if let action = activeAction {
+                let required = (action == .compose ? compose : dictation).modifierFlags
+                if !required.isEmpty && required.intersection(normalizedFlags) != required {
+                    activeAction = nil
+                    composeKeyDown = false
+                    dictationModifiersDown = false
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onEnd?(action)
+                    }
                 }
             }
             return false
@@ -196,14 +280,6 @@ final class HotKeyManager {
         default:
             return false
         }
-    }
-}
-
-extension KeyboardShortcut {
-    static func normalizeFlags(_ flags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags {
-        flags
-            .intersection(.deviceIndependentFlagsMask)
-            .intersection([.command, .option, .control, .shift])
     }
 }
 

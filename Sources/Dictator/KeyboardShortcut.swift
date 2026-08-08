@@ -3,59 +3,111 @@ import Carbon.HIToolbox
 import Foundation
 
 struct KeyboardShortcut: Codable, Equatable, Hashable, Sendable {
-    var keyCode: UInt16
+    /// `nil` means modifiers-only (hold the modifiers to activate).
+    var keyCode: UInt16?
     var modifiers: UInt
 
-    /// Control+Option+D — avoids browser ⌘D conflicts.
-    static let defaultShortcut = KeyboardShortcut(
-        keyCode: UInt16(kVK_ANSI_D),
-        modifiers: NSEvent.ModifierFlags([.control, .option]).rawValue
+    /// Fn + Control — hold to dictate.
+    static let defaultDictationShortcut = KeyboardShortcut(
+        keyCode: nil,
+        modifiers: NSEvent.ModifierFlags([.function, .control]).rawValue
     )
 
-    init(keyCode: UInt16, modifiers: UInt) {
+    /// Fn + Control + C — hold to compose an email.
+    static let defaultComposeShortcut = KeyboardShortcut(
+        keyCode: UInt16(kVK_ANSI_C),
+        modifiers: NSEvent.ModifierFlags([.function, .control]).rawValue
+    )
+
+    /// Legacy alias used by older stored settings.
+    static let defaultShortcut = defaultDictationShortcut
+
+    init(keyCode: UInt16?, modifiers: UInt) {
         self.keyCode = keyCode
         self.modifiers = Self.normalize(modifiers)
     }
 
     init(event: NSEvent) {
-        self.keyCode = event.keyCode
-        self.modifiers = Self.normalize(event.modifierFlags.rawValue)
+        let flags = Self.normalizeFlags(event.modifierFlags)
+        // If only modifiers are held (or key is a pure modifier), store as modifiers-only.
+        if Self.isModifierKeyCode(event.keyCode) {
+            self.keyCode = nil
+            self.modifiers = flags.rawValue
+        } else {
+            self.keyCode = event.keyCode
+            self.modifiers = flags.rawValue
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case keyCode, modifiers
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        keyCode = try container.decodeIfPresent(UInt16.self, forKey: .keyCode)
+        modifiers = Self.normalize(try container.decode(UInt.self, forKey: .modifiers))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(keyCode, forKey: .keyCode)
+        try container.encode(modifiers, forKey: .modifiers)
     }
 
     var modifierFlags: NSEvent.ModifierFlags {
         NSEvent.ModifierFlags(rawValue: modifiers)
     }
 
-    var carbonModifiers: UInt32 {
-        var flags: UInt32 = 0
-        let flagsSet = modifierFlags
-        if flagsSet.contains(.command) { flags |= UInt32(cmdKey) }
-        if flagsSet.contains(.option) { flags |= UInt32(optionKey) }
-        if flagsSet.contains(.control) { flags |= UInt32(controlKey) }
-        if flagsSet.contains(.shift) { flags |= UInt32(shiftKey) }
-        return flags
+    var displayString: String {
+        keycapLabels.joined(separator: "")
     }
 
-    var displayString: String {
+    /// Labels for individual keycap chips in the UI.
+    var keycapLabels: [String] {
         var parts: [String] = []
         let flags = modifierFlags
+        if flags.contains(.function) { parts.append("Fn") }
         if flags.contains(.control) { parts.append("⌃") }
         if flags.contains(.option) { parts.append("⌥") }
         if flags.contains(.shift) { parts.append("⇧") }
         if flags.contains(.command) { parts.append("⌘") }
-        parts.append(Self.keyName(for: keyCode))
-        return parts.joined()
+        if let keyCode {
+            parts.append(Self.keyName(for: keyCode))
+        }
+        return parts
     }
 
     func matches(event: NSEvent) -> Bool {
-        event.keyCode == keyCode
-            && Self.normalize(event.modifierFlags.rawValue) == modifiers
+        let eventFlags = Self.normalizeFlags(event.modifierFlags)
+        guard eventFlags == modifierFlags else { return false }
+        if let keyCode {
+            return event.keyCode == keyCode
+        }
+        return Self.isModifierKeyCode(event.keyCode) || event.type == .flagsChanged
+    }
+
+    static func normalizeFlags(_ flags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags {
+        flags
+            .intersection(.deviceIndependentFlagsMask)
+            .intersection([.command, .option, .control, .shift, .function])
     }
 
     private static func normalize(_ raw: UInt) -> UInt {
-        NSEvent.ModifierFlags(rawValue: raw)
-            .intersection([.command, .option, .control, .shift])
-            .rawValue
+        normalizeFlags(NSEvent.ModifierFlags(rawValue: raw)).rawValue
+    }
+
+    static func isModifierKeyCode(_ keyCode: UInt16) -> Bool {
+        switch Int(keyCode) {
+        case kVK_Command, kVK_RightCommand,
+             kVK_Option, kVK_RightOption,
+             kVK_Control, kVK_RightControl,
+             kVK_Shift, kVK_RightShift,
+             kVK_Function:
+            return true
+        default:
+            return false
+        }
     }
 
     private static func keyName(for keyCode: UInt16) -> String {
@@ -116,6 +168,7 @@ struct KeyboardShortcut: Codable, Equatable, Hashable, Sendable {
         case kVK_F10: return "F10"
         case kVK_F11: return "F11"
         case kVK_F12: return "F12"
+        case kVK_Function: return "Fn"
         default: return "Key\(keyCode)"
         }
     }

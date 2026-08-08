@@ -1,15 +1,19 @@
 .PHONY: build clean run install
 
+APP_NAME := Ramblr.app
+BUILD_APP := build/$(APP_NAME)
+INSTALL_APP := /Applications/$(APP_NAME)
+
 build:
 	./scripts/build-app.sh
 
 run: build
-	open build/Dictator.app
+	open "$(BUILD_APP)"
 
 install: build
-	mkdir -p "$(HOME)/Applications"
-	ditto build/Dictator.app "$(HOME)/Applications/Dictator.app"
-	@echo "Installed at $(HOME)/Applications/Dictator.app"
+	ditto "$(BUILD_APP)" "$(INSTALL_APP)"
+	@echo "Installed at $(INSTALL_APP)"
+	@echo "Launch with: open $(INSTALL_APP)"
 
 clean:
 	swift package clean

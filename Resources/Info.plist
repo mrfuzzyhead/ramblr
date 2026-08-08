@@ -5,13 +5,15 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>Dictator</string>
+	<string>Ramblr</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.fuzzyhead.Dictator</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Dictator</string>
+	<string>Ramblr</string>
+	<key>CFBundleDisplayName</key>
+	<string>Ramblr</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
@@ -27,6 +29,6 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Dictator needs microphone access to record your voice for transcription.</string>
+	<string>Ramblr needs microphone access to record your voice for transcription.</string>
 </dict>
 </plist>

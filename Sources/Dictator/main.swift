@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        NSApp.appearance = NSAppearance(named: .darkAqua)
         // Touch SettingsStore early so .env seeding happens before first dictation.
         _ = SettingsStore.shared
         statusBarController = StatusBarController()
@@ -15,6 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusBarController?.showMainWindow()
         }
         return true
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 }
 

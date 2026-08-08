@@ -5,302 +5,226 @@ struct ContentView: View {
     @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var dictation: DictationController
 
-    @State private var microphones: [MicrophoneDevice] = []
-    @State private var micPermissionGranted = MicrophoneDeviceManager.permissionGranted()
-    @State private var accessibilityTrusted = FocusPasteService.isAccessibilityTrusted(prompt: false)
-    @State private var inputMonitoringGranted = HotKeyManager.hasInputMonitoringAccess()
-    @State private var hotkeyTapActive = DictationController.shared.isHotKeyTapActive
+    var onOpenSettings: () -> Void = {}
+
+    @State private var entryPendingDeletion: TranscriptionEntry?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(spacing: 0) {
             header
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    microphoneSection
-                    historySection
-                    permissionsSection
-                    apiKeySection
-                }
-                .padding(20)
+            Divider().background(RamblrTheme.border)
+            historyList
+        }
+        .background(RamblrTheme.background)
+        .preferredColorScheme(.dark)
+        .frame(minWidth: 560, minHeight: 420)
+        .ignoresSafeArea(edges: .top)
+        .alert("Delete Transcript?", isPresented: pendingDeletionPresented) {
+            Button("Cancel", role: .cancel) {
+                entryPendingDeletion = nil
             }
+            Button("Delete", role: .destructive) {
+                if let id = entryPendingDeletion?.id {
+                    settings.deleteHistory(id: id)
+                }
+                entryPendingDeletion = nil
+            }
+        } message: {
+            Text("This can’t be undone.")
         }
-        .frame(minWidth: 440, minHeight: 520)
-        .onAppear {
-            refreshDevices()
-            refreshPermissions()
-        }
-        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
-            refreshPermissions()
-        }
+    }
+
+    private var pendingDeletionPresented: Binding<Bool> {
+        Binding(
+            get: { entryPendingDeletion != nil },
+            set: { if !$0 { entryPendingDeletion = nil } }
+        )
     }
 
     private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Dictator")
-                    .font(.title2.weight(.semibold))
-                Text(statusLine)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 12) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(RamblrTheme.accent)
+                        .frame(width: 28, height: 28)
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.black)
+                }
+                Text("Ramblr")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
             }
+
             Spacer()
-            statusBadge
+
+            HStack(spacing: 12) {
+                HStack(spacing: 6) {
+                    Text("Press")
+                        .foregroundStyle(RamblrTheme.secondaryText)
+                    ForEach(Array(settings.shortcut.keycapLabels.enumerated()), id: \.offset) { _, label in
+                        KeycapView(label: label)
+                    }
+                    Text("to start ramblin'")
+                        .foregroundStyle(RamblrTheme.secondaryText)
+                }
+                .font(.system(size: 13))
+
+                Button(action: onOpenSettings) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(RamblrTheme.elevated, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Settings")
+            }
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 38)
+        .padding(.bottom, 14)
+    }
+
+    @ViewBuilder
+    private var historyList: some View {
+        if settings.history.isEmpty {
+            emptyState
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    ForEach(groupedHistory, id: \.title) { group in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(group.title)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(RamblrTheme.secondaryText)
+                                .padding(.horizontal, 4)
+
+                            ForEach(group.entries) { entry in
+                                historyRow(entry)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 20)
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: "waveform")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(RamblrTheme.tertiaryText)
+            Text("No ramblings yet")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
+            HStack(spacing: 6) {
+                Text("Hold")
+                ForEach(Array(settings.shortcut.keycapLabels.enumerated()), id: \.offset) { _, label in
+                    KeycapView(label: label)
+                }
+                Text("to start")
+            }
+            .font(.system(size: 13))
+            .foregroundStyle(RamblrTheme.secondaryText)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(20)
     }
 
-    private var statusLine: String {
-        switch dictation.state {
-        case .idle:
-            return "Hold \(settings.shortcut.displayString) anywhere to dictate"
-        case .recording:
-            return "Recording… release to transcribe"
-        case .processing:
-            return "Transcribing and cleaning up…"
-        }
-    }
-
-    private var statusBadge: some View {
-        Group {
-            switch dictation.state {
-            case .idle:
-                Label("Ready", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.secondary)
-            case .recording:
-                Label("Recording", systemImage: "mic.fill")
-                    .foregroundStyle(.red)
-            case .processing:
-                Label("Working", systemImage: "ellipsis.circle")
-                    .foregroundStyle(.orange)
-            }
-        }
-        .font(.callout.weight(.medium))
-    }
-
-    private var microphoneSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Microphone")
-                .font(.headline)
-
-            Picker("Microphone", selection: microphoneSelection) {
-                Text("System default").tag(Optional<String>.none)
-                ForEach(microphones) { device in
-                    Text(device.name).tag(Optional(device.id))
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-
-            Button("Refresh microphones") {
-                refreshDevices()
-            }
-            .buttonStyle(.link)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Global shortcut")
-                    .font(.subheadline.weight(.medium))
-                ShortcutRecorderView(shortcut: $settings.shortcut)
-                Text("Hold the shortcut to record; release to transcribe.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let error = dictation.lastError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
-            }
-        }
-    }
-
-    private var microphoneSelection: Binding<String?> {
-        Binding(
-            get: { settings.microphoneUID },
-            set: { settings.microphoneUID = $0 }
-        )
-    }
-
-    private var permissionsSection: some View {
-        settingsPanel(title: "Permissions") {
-            VStack(alignment: .leading, spacing: 10) {
-                permissionRow(
-                    title: "Microphone",
-                    granted: micPermissionGranted,
-                    actionTitle: micPermissionGranted ? "Granted" : "Request access"
-                ) {
-                    Task {
-                        micPermissionGranted = await MicrophoneDeviceManager.requestPermission()
-                    }
-                }
-
-                permissionRow(
-                    title: "Input Monitoring",
-                    granted: inputMonitoringGranted && hotkeyTapActive,
-                    actionTitle: inputMonitoringGranted ? (hotkeyTapActive ? "Granted" : "Retry") : "Grant access"
-                ) {
-                    _ = HotKeyManager.requestInputMonitoringAccess()
-                    FocusPasteService.openInputMonitoringSettings()
-                    dictation.restartHotKeys()
-                    refreshPermissions()
-                }
-
-                permissionRow(
-                    title: "Accessibility",
-                    granted: accessibilityTrusted,
-                    actionTitle: accessibilityTrusted ? "Granted" : "Grant access"
-                ) {
-                    accessibilityTrusted = FocusPasteService.isAccessibilityTrusted(prompt: true)
-                    if !accessibilityTrusted {
-                        FocusPasteService.openAccessibilitySettings()
-                    }
-                    _ = FocusPasteService.requestPostEventAccess()
-                    refreshPermissions()
-                }
-
-                Text("Input Monitoring is required for the shortcut when Dictator is in the background. Accessibility is required to detect the focused field and paste.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var apiKeySection: some View {
-        settingsPanel(title: "API key") {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("OpenAI API key")
-                    .font(.subheadline.weight(.medium))
-                SecureField("sk-…", text: $settings.apiKey)
-                    .textFieldStyle(.roundedBorder)
-            }
-        }
-    }
-
-    private func settingsPanel<Content: View>(
-        title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.headline)
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(
-            Color(nsColor: .controlBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-    }
-
-    private func permissionRow(
-        title: String,
-        granted: Bool,
-        actionTitle: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        HStack {
-            Image(systemName: granted ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(granted ? .green : .orange)
-            Text(title)
-            Spacer()
-            Button(actionTitle, action: action)
-                .disabled(granted)
-        }
-    }
-
-    private var historySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Recent transcriptions")
-                    .font(.headline)
-                Spacer()
-                if !settings.history.isEmpty {
-                    Button("Clear") {
-                        settings.clearHistory()
-                    }
-                    .buttonStyle(.link)
-                }
-            }
-
-            if settings.history.isEmpty {
-                Text("Your recent dictations will appear here.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 20)
-            } else {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(settings.history) { entry in
-                        historyRow(entry)
-                    }
-                }
-            }
-        }
-    }
-
     private func historyRow(_ entry: TranscriptionEntry) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(entry.text)
-                .font(.body)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            HStack {
-                Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let timing = historyTimingLabel(for: entry) {
-                    Text(timing)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
+        HStack(alignment: .top, spacing: 14) {
+            Text(timeLabel(for: entry.createdAt))
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundStyle(RamblrTheme.secondaryText)
+                .frame(width: 58, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 6) {
+                if entry.kind == .compose {
+                    Text("Compose")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(RamblrTheme.accent, in: Capsule())
                 }
-                Text(entry.pasted ? "Pasted" : "Clipboard")
-                    .font(.caption2.weight(.medium))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.primary.opacity(0.06), in: Capsule())
-                Spacer()
-                Button("Copy") {
+                Text(entry.text)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.white)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack(spacing: 4) {
+                Button {
                     FocusPasteService.copyToClipboard(entry.text)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(RamblrTheme.secondaryText)
+                        .frame(width: 28, height: 28)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
+                .help("Copy")
+
+                Button {
+                    entryPendingDeletion = entry
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(RamblrTheme.secondaryText)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("Delete")
             }
         }
-        .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(14)
+        .background(RamblrTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    private func historyTimingLabel(for entry: TranscriptionEntry) -> String? {
-        switch (entry.audioDurationMs, entry.transcriptionMs) {
-        case let (audio?, transcription?):
-            return "\(audio) ms audio · \(transcription) ms response"
-        case let (audio?, nil):
-            return "\(audio) ms audio"
-        case let (nil, transcription?):
-            return "\(transcription) ms response"
-        case (nil, nil):
-            return nil
+    private struct HistoryGroup {
+        let title: String
+        let entries: [TranscriptionEntry]
+    }
+
+    private var groupedHistory: [HistoryGroup] {
+        let calendar = Calendar.current
+        var buckets: [(String, [TranscriptionEntry])] = []
+        var indexByTitle: [String: Int] = [:]
+
+        for entry in settings.history {
+            let title = dayTitle(for: entry.createdAt, calendar: calendar)
+            if let index = indexByTitle[title] {
+                buckets[index].1.append(entry)
+            } else {
+                indexByTitle[title] = buckets.count
+                buckets.append((title, [entry]))
+            }
         }
+
+        return buckets.map { HistoryGroup(title: $0.0, entries: $0.1) }
     }
 
-    private func refreshDevices() {
-        microphones = MicrophoneDeviceManager.listInputDevices()
-        if let uid = settings.microphoneUID,
-           !microphones.contains(where: { $0.id == uid }) {
-            settings.microphoneUID = nil
-        }
+    private func dayTitle(for date: Date, calendar: Calendar) -> String {
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMMM yyyy"
+        return formatter.string(from: date)
     }
 
-    private func refreshPermissions() {
-        micPermissionGranted = MicrophoneDeviceManager.permissionGranted()
-        accessibilityTrusted = FocusPasteService.isAccessibilityTrusted(prompt: false)
-        inputMonitoringGranted = HotKeyManager.hasInputMonitoringAccess()
-        hotkeyTapActive = dictation.isHotKeyTapActive
+    private func timeLabel(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mma"
+        formatter.amSymbol = "am"
+        formatter.pmSymbol = "pm"
+        return formatter.string(from: date).lowercased()
     }
 }

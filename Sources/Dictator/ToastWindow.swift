@@ -10,10 +10,19 @@ final class ToastPresenter {
 
     func show(message: String, duration: TimeInterval = 3.5) {
         hideWorkItem?.cancel()
+        panel?.orderOut(nil)
         panel?.close()
+        panel = nil
 
-        let hosting = NSHostingView(rootView: ToastView(message: message))
-        hosting.frame = NSRect(x: 0, y: 0, width: 360, height: 72)
+        let root = ToastView(message: message)
+            .preferredColorScheme(.dark)
+        let hosting = NSHostingView(rootView: root)
+        let fitting = hosting.fittingSize
+        let size = NSSize(
+            width: max(220, min(420, fitting.width)),
+            height: max(52, fitting.height)
+        )
+        hosting.frame = NSRect(origin: .zero, size: size)
 
         let panel = NSPanel(
             contentRect: hosting.frame,
@@ -29,10 +38,12 @@ final class ToastPresenter {
         panel.hasShadow = true
         panel.contentView = hosting
         panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = false
+        panel.setContentSize(size)
 
         if let screen = NSScreen.main {
             let visible = screen.visibleFrame
-            let x = visible.midX - hosting.frame.width / 2
+            let x = visible.midX - size.width / 2
             let y = visible.minY + 28
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
@@ -41,6 +52,7 @@ final class ToastPresenter {
         self.panel = panel
 
         let work = DispatchWorkItem { [weak self] in
+            self?.panel?.orderOut(nil)
             self?.panel?.close()
             self?.panel = nil
         }
@@ -53,18 +65,21 @@ private struct ToastView: View {
     let message: String
 
     var body: some View {
-        Text(message)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.primary)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-            )
-            .padding(4)
+        HStack(spacing: 10) {
+            Circle()
+                .fill(Color.white.opacity(0.25))
+                .frame(width: 8, height: 8)
+
+            Text(message)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(RamblrTheme.hudBackground, in: Capsule())
+        .fixedSize()
+        .padding(4)
     }
 }

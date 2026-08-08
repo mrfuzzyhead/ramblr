@@ -2,23 +2,53 @@ import Foundation
 import Security
 
 enum KeychainStore {
-    private static let service = "com.fuzzyhead.Dictator"
+    private static let service = "com.fuzzyhead.Ramblr"
+    private static let legacyService = "com.fuzzyhead.Dictator"
 
     static func save<T: Encodable>(_ value: T, account: String) throws {
         let data = try JSONEncoder().encode(value)
-        let query: [String: Any] = [
+        delete(account: account, service: service)
+
+        var insert: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account
+            kSecAttrAccount as String: account,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+            kSecValueData as String: data
         ]
-        SecItemDelete(query as CFDictionary)
-        var insert = query
-        insert[kSecValueData as String] = data
+        if let access = noninteractiveAccess() {
+            insert[kSecAttrAccess as String] = access
+        }
+
         let status = SecItemAdd(insert as CFDictionary, nil)
         guard status == errSecSuccess else { throw KeychainError.status(status) }
     }
 
-    static func load<T: Decodable>(_ type: T.Type, account: String) throws -> T? {
+    static func load<T: Codable>(_ type: T.Type, account: String) throws -> T? {
+        if let value = try load(type, account: account, service: service) {
+            return value
+        }
+
+        // One-time migration from the old service name / restrictive ACL.
+        if let value = try load(type, account: account, service: legacyService) {
+            try? save(value, account: account)
+            delete(account: account, service: legacyService)
+            return value
+        }
+
+        return nil
+    }
+
+    static func delete(account: String) {
+        delete(account: account, service: service)
+        delete(account: account, service: legacyService)
+    }
+
+    private static func load<T: Decodable>(
+        _ type: T.Type,
+        account: String,
+        service: String
+    ) throws -> T? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -35,13 +65,21 @@ enum KeychainStore {
         return try JSONDecoder().decode(type, from: data)
     }
 
-    static func delete(account: String) {
+    private static func delete(account: String, service: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
         SecItemDelete(query as CFDictionary)
+    }
+
+    /// Allows this machine to read the item without re-prompting after every ad-hoc re-sign.
+    private static func noninteractiveAccess() -> SecAccess? {
+        var access: SecAccess?
+        let status = SecAccessCreate("Ramblr" as CFString, nil, &access)
+        guard status == errSecSuccess else { return nil }
+        return access
     }
 }
 

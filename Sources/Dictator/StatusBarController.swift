@@ -3,65 +3,103 @@ import Combine
 import SwiftUI
 
 @MainActor
-final class StatusBarController: NSObject {
+final class StatusBarController: NSObject, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private var windowController: NSWindowController?
-    private var rightClickMenu: NSMenu?
+    private var mainWindowController: NSWindowController?
+    private var settingsWindowController: NSWindowController?
+    private var menu = NSMenu()
     private var cancellables = Set<AnyCancellable>()
     private let dictation = DictationController.shared
+    private let settings = SettingsStore.shared
 
     override init() {
         super.init()
         configureStatusItem()
-        configureMenu()
+        rebuildMenu()
         observeState()
         RecordingHUDPresenter.shared.start()
+        // Request quietly — do not show system permission sheets on every launch.
+        // Settings → Permissions is the place to grant / re-grant after rebuilds.
         _ = HotKeyManager.requestInputMonitoringAccess()
         _ = FocusPasteService.requestPostEventAccess()
-        _ = FocusPasteService.isAccessibilityTrusted(prompt: true)
+        _ = FocusPasteService.isAccessibilityTrusted(prompt: false)
         dictation.start()
 
-        if !HotKeyManager.hasInputMonitoringAccess() {
-            DispatchQueue.main.async { [weak self] in
-                self?.showMainWindow()
-                FocusPasteService.openInputMonitoringSettings()
-            }
-        }
-
-        // First launch / missing key: open the settings window so setup is obvious.
         if SettingsStore.shared.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             DispatchQueue.main.async { [weak self] in
-                self?.showMainWindow()
+                self?.showSettingsWindow()
             }
         }
     }
 
     func showMainWindow() {
-        if let windowController {
-            windowController.showWindow(nil)
+        if let mainWindowController {
+            mainWindowController.showWindow(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        let root = ContentView()
-            .environmentObject(SettingsStore.shared)
+        let root = ContentView(onOpenSettings: { [weak self] in
+            self?.showSettingsWindow()
+        })
+        .environmentObject(settings)
+        .environmentObject(dictation)
+
+        let hosting = NSHostingController(rootView: root)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 560),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Ramblr"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(red: 18 / 255, green: 18 / 255, blue: 18 / 255, alpha: 1)
+        window.contentViewController = hosting
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.setFrameAutosaveName("RamblrMainWindow")
+
+        let controller = NSWindowController(window: window)
+        mainWindowController = controller
+        controller.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func showSettingsWindow() {
+        if let settingsWindowController {
+            settingsWindowController.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let root = SettingsView()
+            .environmentObject(settings)
             .environmentObject(dictation)
 
         let hosting = NSHostingController(rootView: root)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 640),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: NSRect(x: 0, y: 0, width: 780, height: 480),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        window.title = "Dictator"
+        window.title = "Settings"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(red: 18 / 255, green: 18 / 255, blue: 18 / 255, alpha: 1)
         window.contentViewController = hosting
         window.center()
         window.isReleasedWhenClosed = false
-        window.setFrameAutosaveName("DictatorMainWindow")
+        window.setFrameAutosaveName("RamblrSettingsWindow")
 
         let controller = NSWindowController(window: window)
-        windowController = controller
+        settingsWindowController = controller
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -69,26 +107,122 @@ final class StatusBarController: NSObject {
     private func configureStatusItem() {
         guard let button = statusItem.button else { return }
         button.image = NSImage(
-            systemSymbolName: "waveform",
-            accessibilityDescription: "Dictator"
+            systemSymbolName: "mic.fill",
+            accessibilityDescription: "Ramblr"
         )
         button.image?.isTemplate = true
-        button.toolTip = "Dictator — hold ⌃⌥D to dictate"
-        button.target = self
-        button.action = #selector(statusItemClicked(_:))
-        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        button.toolTip = "Ramblr — hold \(settings.shortcut.displayString) to dictate"
+        statusItem.menu = menu
+        menu.delegate = self
     }
 
-    private func configureMenu() {
-        let menu = NSMenu()
-        menu.addItem(withTitle: "Open Dictator", action: #selector(openDictator), keyEquivalent: "o")
-            .target = self
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        rebuildMenu()
+    }
+
+    private func rebuildMenu() {
+        menu.removeAllItems()
+
+        let shortcutItem = NSMenuItem(
+            title: "Dictation: \(settings.shortcut.displayString)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        shortcutItem.isEnabled = false
+        menu.addItem(shortcutItem)
+
+        let composeItem = NSMenuItem(
+            title: "Compose: \(settings.composeShortcut.displayString)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        composeItem.isEnabled = false
+        menu.addItem(composeItem)
+
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit Dictator", action: #selector(quit), keyEquivalent: "q")
-            .target = self
-        // Menu is shown on right-click only; left-click opens the window.
-        statusItem.menu = nil
-        rightClickMenu = menu
+
+        let micItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
+        micItem.submenu = microphoneSubmenu()
+        menu.addItem(micItem)
+
+        let pasteItem = NSMenuItem(
+            title: "Paste Last Transcript",
+            action: #selector(pasteLastTranscript),
+            keyEquivalent: ""
+        )
+        pasteItem.target = self
+        pasteItem.isEnabled = settings.lastTranscript != nil
+        menu.addItem(pasteItem)
+
+        menu.addItem(.separator())
+
+        let showItem = NSMenuItem(
+            title: "Show Ramblr",
+            action: #selector(showRamblr),
+            keyEquivalent: "o"
+        )
+        showItem.target = self
+        showItem.image = NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil)
+        menu.addItem(showItem)
+
+        let settingsItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(openSettings),
+            keyEquivalent: ","
+        )
+        settingsItem.target = self
+        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+        menu.addItem(settingsItem)
+
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(
+            title: "Quit Ramblr",
+            action: #selector(quit),
+            keyEquivalent: "q"
+        )
+        quitItem.target = self
+        menu.addItem(quitItem)
+    }
+
+    private func microphoneSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+        let devices = MicrophoneDeviceManager.listInputDevices()
+
+        let auto = NSMenuItem(
+            title: autoDetectTitle(devices: devices),
+            action: #selector(selectAutoMicrophone),
+            keyEquivalent: ""
+        )
+        auto.target = self
+        auto.state = settings.microphoneUID == nil ? .on : .off
+        submenu.addItem(auto)
+
+        if !devices.isEmpty {
+            submenu.addItem(.separator())
+        }
+
+        for device in devices {
+            let item = NSMenuItem(
+                title: device.name,
+                action: #selector(selectMicrophone(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = device.id
+            item.state = settings.microphoneUID == device.id ? .on : .off
+            submenu.addItem(item)
+        }
+
+        return submenu
+    }
+
+    private func autoDetectTitle(devices: [MicrophoneDevice]) -> String {
+        if let uid = MicrophoneDeviceManager.defaultInputDeviceUID(),
+           let device = devices.first(where: { $0.id == uid }) {
+            return "Auto-detect (\(device.name))"
+        }
+        return "Auto-detect (System Default)"
     }
 
     private func observeState() {
@@ -99,10 +233,12 @@ final class StatusBarController: NSObject {
             }
             .store(in: &cancellables)
 
-        SettingsStore.shared.$shortcut
+        settings.$shortcut
+            .combineLatest(settings.$composeShortcut)
             .receive(on: RunLoop.main)
-            .sink { [weak self] shortcut in
-                self?.statusItem.button?.toolTip = "Dictator — hold \(shortcut.displayString) to dictate"
+            .sink { [weak self] dictationShortcut, _ in
+                self?.statusItem.button?.toolTip =
+                    "Ramblr — hold \(dictationShortcut.displayString) to dictate"
             }
             .store(in: &cancellables)
     }
@@ -111,47 +247,53 @@ final class StatusBarController: NSObject {
         guard let button = statusItem.button else { return }
         let symbol: String
         switch state {
-        case .idle:
-            symbol = "waveform"
+        case .idle, .complete:
+            symbol = "mic.fill"
+        case .preparing:
+            symbol = "mic"
         case .recording:
             symbol = "mic.fill"
         case .processing:
             symbol = "ellipsis.circle"
         }
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Dictator")
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Ramblr")
         button.image?.isTemplate = true
 
-        if state == .recording {
+        switch state {
+        case .recording:
             button.contentTintColor = .systemRed
-        } else {
+        case .complete:
+            button.contentTintColor = RamblrTheme.accentNS
+        default:
             button.contentTintColor = nil
         }
     }
 
-    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
-        guard let event = NSApp.currentEvent else {
-            showMainWindow()
-            return
-        }
-
-        if event.type == .rightMouseUp {
-            rightClickMenu?.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
-            return
-        }
-
-        toggleMainWindow()
+    @objc private func selectAutoMicrophone() {
+        settings.microphoneUID = nil
     }
 
-    private func toggleMainWindow() {
-        if let window = windowController?.window, window.isVisible {
-            window.orderOut(nil)
-            return
+    @objc private func selectMicrophone(_ sender: NSMenuItem) {
+        guard let uid = sender.representedObject as? String else { return }
+        settings.microphoneUID = uid
+    }
+
+    @objc private func pasteLastTranscript() {
+        guard let text = settings.lastTranscript else { return }
+        FocusPasteService.copyToClipboard(text)
+        if FocusPasteService.hasEditableFocus() {
+            FocusPasteService.paste(text)
+        } else {
+            ToastPresenter.shared.show(message: "Last transcript copied to the clipboard.")
         }
+    }
+
+    @objc private func showRamblr() {
         showMainWindow()
     }
 
-    @objc private func openDictator() {
-        showMainWindow()
+    @objc private func openSettings() {
+        showSettingsWindow()
     }
 
     @objc private func quit() {

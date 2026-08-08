@@ -20,7 +20,7 @@ final class AudioRecorder {
         try MicrophoneDeviceManager.setDefaultInputDevice(uid: microphoneUID)
 
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("dictator-\(UUID().uuidString).m4a")
+            .appendingPathComponent("ramblr-\(UUID().uuidString).m4a")
         outputURL = url
 
         let settings: [String: Any] = [

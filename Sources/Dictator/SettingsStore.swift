@@ -7,6 +7,7 @@ final class SettingsStore: ObservableObject {
 
     private enum Keys {
         static let shortcut = "shortcut"
+        static let composeShortcut = "composeShortcut"
         static let microphoneUID = "microphoneUID"
         static let history = "history"
         static let seededAPIKey = "seededAPIKey"
@@ -23,6 +24,10 @@ final class SettingsStore: ObservableObject {
 
     @Published var shortcut: KeyboardShortcut {
         didSet { persistShortcut() }
+    }
+
+    @Published var composeShortcut: KeyboardShortcut {
+        didSet { persistComposeShortcut() }
     }
 
     @Published var microphoneUID: String? {
@@ -52,7 +57,14 @@ final class SettingsStore: ObservableObject {
            let decoded = try? decoder.decode(KeyboardShortcut.self, from: data) {
             shortcut = decoded
         } else {
-            shortcut = .defaultShortcut
+            shortcut = .defaultDictationShortcut
+        }
+
+        if let data = defaults.data(forKey: Keys.composeShortcut),
+           let decoded = try? decoder.decode(KeyboardShortcut.self, from: data) {
+            composeShortcut = decoded
+        } else {
+            composeShortcut = .defaultComposeShortcut
         }
 
         microphoneUID = defaults.string(forKey: Keys.microphoneUID)
@@ -65,6 +77,10 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    var lastTranscript: String? {
+        history.first?.text
+    }
+
     func prependHistory(_ entry: TranscriptionEntry) {
         var next = history
         next.insert(entry, at: 0)
@@ -74,6 +90,10 @@ final class SettingsStore: ObservableObject {
         history = next
     }
 
+    func deleteHistory(id: UUID) {
+        history.removeAll { $0.id == id }
+    }
+
     func clearHistory() {
         history = []
     }
@@ -81,6 +101,12 @@ final class SettingsStore: ObservableObject {
     private func persistShortcut() {
         if let data = try? encoder.encode(shortcut) {
             defaults.set(data, forKey: Keys.shortcut)
+        }
+    }
+
+    private func persistComposeShortcut() {
+        if let data = try? encoder.encode(composeShortcut) {
+            defaults.set(data, forKey: Keys.composeShortcut)
         }
     }
 
@@ -116,7 +142,6 @@ enum EnvLoader {
         urls.append(cwd.appendingPathComponent(".env"))
         if let exe = Bundle.main.executableURL {
             urls.append(exe.deletingLastPathComponent().appendingPathComponent(".env"))
-            // Dictator.app/Contents/MacOS -> Contents/Resources/.env
             urls.append(
                 exe
                     .deletingLastPathComponent()
