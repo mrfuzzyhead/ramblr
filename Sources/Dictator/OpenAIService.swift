@@ -27,6 +27,18 @@ enum OpenAIServiceError: LocalizedError {
 struct OpenAIService: Sendable {
     static let transcriptionModel = "gpt-transcribe"
 
+    /// Guides style: Australian English + spoken punctuation → real characters.
+    static let transcriptionPrompt = """
+    Transcribe in Australian English spelling (for example: colour, organise, centre, travelling, defence).
+    Convert spoken punctuation and formatting commands into the actual characters instead of writing the words out.
+    Examples: "comma" becomes ",", "full stop" or "period" becomes ".", "question mark" becomes "?", \
+    "exclamation mark" becomes "!", "colon" becomes ":", "semicolon" becomes ";", "new line" becomes a newline, \
+    "new paragraph" becomes a blank line, "open parenthesis" becomes "(", "close parenthesis" becomes ")", \
+    "open quote" and "close quote" become quotation marks, "hyphen" becomes "-", "dash" becomes an em dash, \
+    "ellipsis" becomes "…".
+    Preserve natural capitalisation and spacing around the inserted punctuation.
+    """
+
     private let session: URLSession
 
     init(session: URLSession = .shared) {
@@ -49,6 +61,8 @@ struct OpenAIService: Sendable {
         var body = Data()
         body.append(multipartField(name: "model", value: Self.transcriptionModel, boundary: boundary))
         body.append(multipartField(name: "response_format", value: "json", boundary: boundary))
+        body.append(multipartField(name: "prompt", value: Self.transcriptionPrompt, boundary: boundary))
+        body.append(multipartField(name: "languages[]", value: "en", boundary: boundary))
         body.append(multipartFile(
             name: "file",
             filename: fileURL.lastPathComponent,
@@ -63,8 +77,10 @@ struct OpenAIService: Sendable {
         try Self.validate(response: response, data: data)
 
         let decoded = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
-        let text = decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { throw OpenAIServiceError.emptyTranscription }
+        let text = TranscriptPostProcessor.process(decoded.text)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw OpenAIServiceError.emptyTranscription
+        }
         return text
     }
 

@@ -43,4 +43,7 @@ You can also drag `build/Ramblr.app` into `/Applications` in Finder.
 - The API key is stored in the Keychain after first use.
 - If a `.env` file is present at build time, it is bundled for first-launch seeding.
 - History of recent transcriptions is kept locally (last 50).
+- Transcription uses Australian English spelling and converts spoken punctuation (e.g. “comma”, “new line”).
+- Pasted transcripts always include a trailing space.
+- Start at Login is in Settings → General (requires the installed `.app`).
 - The UI is dark mode only.

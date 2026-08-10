@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 enum SettingsPane: String, CaseIterable, Identifiable {
+    case general
     case shortcuts
     case microphone
     case artificialIntelligence
@@ -11,6 +12,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .general: return "General"
         case .shortcuts: return "Shortcuts"
         case .microphone: return "Microphone"
         case .artificialIntelligence: return "Artificial Intelligence"
@@ -20,6 +22,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .general: return "gearshape"
         case .shortcuts: return "keyboard"
         case .microphone: return "mic"
         case .artificialIntelligence: return "sparkle"
@@ -32,12 +35,14 @@ struct SettingsView: View {
     @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var dictation: DictationController
 
-    @State private var pane: SettingsPane = .shortcuts
+    @State private var pane: SettingsPane = .general
     @State private var microphones: [MicrophoneDevice] = []
     @State private var draftAPIKey = ""
     @State private var isEditingAPIKey = false
     @StateObject private var levelMonitor = MicrophoneLevelMonitor()
 
+    @State private var launchAtLoginEnabled = LaunchAtLogin.isEnabled
+    @State private var launchAtLoginError: String?
     @State private var micPermissionGranted = MicrophoneDeviceManager.permissionGranted()
     @State private var accessibilityTrusted = FocusPasteService.isAccessibilityTrusted(prompt: false)
     @State private var inputMonitoringGranted = HotKeyManager.hasInputMonitoringAccess()
@@ -57,6 +62,7 @@ struct SettingsView: View {
         .onAppear {
             refreshDevices()
             refreshPermissions()
+            refreshLaunchAtLogin()
             isEditingAPIKey = settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         .onChange(of: pane) { _, newValue in
@@ -76,6 +82,7 @@ struct SettingsView: View {
         }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
             refreshPermissions()
+            refreshLaunchAtLogin()
             if pane == .microphone {
                 refreshDevices()
             }
@@ -119,6 +126,8 @@ struct SettingsView: View {
     @ViewBuilder
     private var detail: some View {
         switch pane {
+        case .general:
+            generalPane
         case .shortcuts:
             shortcutsPane
         case .microphone:
@@ -127,6 +136,47 @@ struct SettingsView: View {
             aiPane
         case .permissions:
             permissionsPane
+        }
+    }
+
+    private var generalPane: some View {
+        settingsDetail(
+            title: "General",
+            subtitle: "App behaviour and startup options."
+        ) {
+            settingsCard {
+                HStack(alignment: .center, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Start at Login")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text(launchAtLoginSubtitle)
+                            .font(.system(size: 12))
+                            .foregroundStyle(RamblrTheme.secondaryText)
+                    }
+                    Spacer(minLength: 0)
+                    Toggle("Start at Login", isOn: launchAtLoginBinding)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(RamblrTheme.accent)
+                }
+                .padding(16)
+            }
+
+            if let launchAtLoginError {
+                Text(launchAtLoginError)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+            }
+
+            if LaunchAtLogin.status == .requiresApproval {
+                Button("Open Login Items Settings") {
+                    LaunchAtLogin.openLoginItemsSettings()
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(RamblrTheme.accent)
+                .font(.system(size: 12, weight: .medium))
+            }
         }
     }
 
@@ -327,6 +377,7 @@ struct SettingsView: View {
             content()
         }
         .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(RamblrTheme.border, lineWidth: 1)
@@ -445,6 +496,45 @@ struct SettingsView: View {
         accessibilityTrusted = FocusPasteService.isAccessibilityTrusted(prompt: false)
         inputMonitoringGranted = HotKeyManager.hasInputMonitoringAccess()
         hotkeyTapActive = dictation.isHotKeyTapActive
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLoginEnabled },
+            set: { enabled in
+                do {
+                    let status = try LaunchAtLogin.setEnabled(enabled)
+                    launchAtLoginEnabled = status == .enabled
+                    if status == .requiresApproval {
+                        launchAtLoginError = "macOS needs approval before Ramblr can start at login."
+                        LaunchAtLogin.openLoginItemsSettings()
+                    } else {
+                        launchAtLoginError = nil
+                    }
+                } catch {
+                    launchAtLoginEnabled = LaunchAtLogin.isEnabled
+                    launchAtLoginError = error.localizedDescription
+                }
+            }
+        )
+    }
+
+    private var launchAtLoginSubtitle: String {
+        switch LaunchAtLogin.status {
+        case .requiresApproval:
+            return "Waiting for approval in System Settings → General → Login Items"
+        case .notFound:
+            return "Available when Ramblr is installed as an app (not from swift run)"
+        default:
+            return "Launch Ramblr automatically when you log in"
+        }
+    }
+
+    private func refreshLaunchAtLogin() {
+        launchAtLoginEnabled = LaunchAtLogin.isEnabled
+        if LaunchAtLogin.isEnabled {
+            launchAtLoginError = nil
+        }
     }
 }
 
