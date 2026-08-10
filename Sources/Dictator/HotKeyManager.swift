@@ -23,11 +23,16 @@ final class HotKeyManager {
     private var activeAction: HotKeyAction?
     private var dictationModifiersDown = false
     private var dictateAndSendKeyDown = false
+    /// Cached so the event-tap callback can fast-path ⌘ chords without locking.
+    fileprivate var shortcutsUseCommand = false
     private let lock = NSLock()
 
     init(dictation: KeyboardShortcut, dictateAndSend: KeyboardShortcut) {
         self.dictationShortcut = dictation
         self.dictateAndSendShortcut = dictateAndSend
+        self.shortcutsUseCommand =
+            dictation.modifierFlags.contains(.command)
+            || dictateAndSend.modifierFlags.contains(.command)
     }
 
     deinit {
@@ -38,6 +43,9 @@ final class HotKeyManager {
         lock.lock()
         dictationShortcut = dictation
         dictateAndSendShortcut = dictateAndSend
+        shortcutsUseCommand =
+            dictation.modifierFlags.contains(.command)
+            || dictateAndSend.modifierFlags.contains(.command)
         activeAction = nil
         dictationModifiersDown = false
         dictateAndSendKeyDown = false
@@ -120,9 +128,11 @@ final class HotKeyManager {
             | (1 << CGEventType.flagsChanged.rawValue)
 
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
+        // Session tap is enough for shortcuts and is less invasive than HID head-insert,
+        // which can disrupt system chords like ⌘Tab when the tap is busy/disabled.
         let tap =
             CGEvent.tapCreate(
-                tap: .cghidEventTap,
+                tap: .cgSessionEventTap,
                 place: .headInsertEventTap,
                 options: .defaultTap,
                 eventsOfInterest: mask,
@@ -130,7 +140,7 @@ final class HotKeyManager {
                 userInfo: userInfo
             )
             ?? CGEvent.tapCreate(
-                tap: .cgSessionEventTap,
+                tap: .cghidEventTap,
                 place: .headInsertEventTap,
                 options: .defaultTap,
                 eventsOfInterest: mask,
@@ -302,15 +312,30 @@ private func hotKeyEventTapCallback(
         return Unmanaged.passUnretained(event)
     }
 
-    guard let nsEvent = NSEvent(cgEvent: event) else {
+    // Fast-path system ⌘ chords (⌘Tab, ⌘`, etc.) when our shortcuts don't use ⌘.
+    // Avoids work that can delay/drop App Switcher events.
+    if event.flags.contains(.maskCommand), !manager.shortcutsUseCommand {
         return Unmanaged.passUnretained(event)
     }
 
+    let eventType: NSEvent.EventType
+    switch type {
+    case .keyDown: eventType = .keyDown
+    case .keyUp: eventType = .keyUp
+    case .flagsChanged: eventType = .flagsChanged
+    default:
+        return Unmanaged.passUnretained(event)
+    }
+
+    let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+    let flags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
+    let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+
     let consumed = manager.handle(
-        keyCode: nsEvent.keyCode,
-        flags: nsEvent.modifierFlags,
-        type: nsEvent.type,
-        isRepeat: nsEvent.isARepeat
+        keyCode: keyCode,
+        flags: flags,
+        type: eventType,
+        isRepeat: isRepeat
     )
     return consumed ? nil : Unmanaged.passUnretained(event)
 }

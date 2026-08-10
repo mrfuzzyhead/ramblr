@@ -188,20 +188,16 @@ enum FocusPasteService {
     }
 
     /// Chrome/Electron lazily build their AX tree until an assistive client opts in.
+    /// Only set the narrow Chromium flag — `AXEnhancedUserInterface` can disrupt
+    /// focus/keyboard behavior when switching back to that app with ⌘Tab.
     private static func enableChromiumAccessibilityIfNeeded(for app: NSRunningApplication) {
         let pid = app.processIdentifier
         let appElement = AXUIElementCreateApplication(pid)
         let trueValue = kCFBooleanTrue as CFTypeRef
 
-        // Prefer the narrower Chromium flag; also try Enhanced User Interface.
         _ = AXUIElementSetAttributeValue(
             appElement,
             "AXManualAccessibility" as CFString,
-            trueValue
-        )
-        _ = AXUIElementSetAttributeValue(
-            appElement,
-            "AXEnhancedUserInterface" as CFString,
             trueValue
         )
     }
@@ -220,9 +216,12 @@ enum FocusPasteService {
         return (parent as! AXUIElement)
     }
 
+    /// Posts V with the Command flag only — never Command keyDown/Up.
+    /// `privateState` + HID tap delivers paste without sticky ⌘ for App Switcher.
     private static func synthesizePaste() {
-        let source = CGEventSource(stateID: .hidSystemState)
+        guard let source = CGEventSource(stateID: .privateState) else { return }
 
+        // kVK_ANSI_V = 0x09
         let keyVDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
         let keyVUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
         keyVDown?.flags = .maskCommand
@@ -233,7 +232,7 @@ enum FocusPasteService {
     }
 
     private static func synthesizeReturn() {
-        let source = CGEventSource(stateID: .hidSystemState)
+        guard let source = CGEventSource(stateID: .privateState) else { return }
         // kVK_Return
         let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x24, keyDown: true)
         let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x24, keyDown: false)
