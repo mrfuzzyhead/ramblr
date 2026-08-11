@@ -30,6 +30,7 @@ final class DictationController: ObservableObject {
     private let openAI = OpenAIService()
     private var hotKeyManager: HotKeyManager?
     private var recordingStartedAt: Date?
+    private var clipboardSnapshot: ClipboardSnapshot?
     private var elapsedTimer: Timer?
     private var completeResetWorkItem: DispatchWorkItem?
     private var cancellables = Set<AnyCancellable>()
@@ -122,12 +123,15 @@ final class DictationController: ObservableObject {
 
         do {
             try recorder.start(microphoneUID: settings.microphoneUID)
+            // Capture before we later overwrite the pasteboard for ⌘V.
+            clipboardSnapshot = FocusPasteService.captureClipboard()
             recordingStartedAt = Date()
             state = .recording
             startElapsedTimer()
         } catch {
             lastError = error.localizedDescription
             ToastPresenter.shared.show(message: error.localizedDescription)
+            clipboardSnapshot = nil
             state = .idle
         }
     }
@@ -140,13 +144,16 @@ final class DictationController: ObservableObject {
         if state == .preparing {
             recorder.cancel()
             recordingStartedAt = nil
+            clipboardSnapshot = nil
             state = .idle
             return
         }
 
         let started = recordingStartedAt
         let captureMode = mode
+        let priorClipboard = clipboardSnapshot
         recordingStartedAt = nil
+        clipboardSnapshot = nil
         guard let recording = recorder.stop() else {
             state = .idle
             return
@@ -176,14 +183,16 @@ final class DictationController: ObservableObject {
                 )
 
                 let editable = FocusPasteService.hasEditableFocus()
-                FocusPasteService.copyToClipboard(text)
 
                 if editable {
                     if captureMode == .dictateAndSend {
-                        FocusPasteService.pasteAndSend(text)
+                        FocusPasteService.pasteAndSend(text, restoringClipboard: priorClipboard)
                     } else {
-                        FocusPasteService.paste(text)
+                        FocusPasteService.paste(text, restoringClipboard: priorClipboard)
                     }
+                } else {
+                    // Leave the transcript on the clipboard for manual paste.
+                    FocusPasteService.copyToClipboard(text)
                 }
 
                 settings.prependHistory(

@@ -2,6 +2,11 @@ import AppKit
 import ApplicationServices
 import Foundation
 
+/// Snapshot of the general pasteboard so dictation can restore prior contents after paste.
+struct ClipboardSnapshot {
+    fileprivate let items: [[NSPasteboard.PasteboardType: Data]]
+}
+
 enum FocusPasteService {
     static func isAccessibilityTrusted(prompt: Bool = false) -> Bool {
         if prompt {
@@ -83,22 +88,26 @@ enum FocusPasteService {
     }
 
     /// Copies text and synthesizes ⌘V into the frontmost app.
-    static func paste(_ text: String) {
+    /// When `snapshot` is provided, prior clipboard contents are restored after paste.
+    static func paste(_ text: String, restoringClipboard snapshot: ClipboardSnapshot? = nil) {
         _ = requestPostEventAccess()
         copyToClipboard(text)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             synthesizePaste()
+            restoreClipboardAfterPaste(snapshot)
         }
     }
 
     /// Pastes text, then presses Return/Enter to send.
-    static func pasteAndSend(_ text: String) {
+    /// When `snapshot` is provided, prior clipboard contents are restored after paste and Return.
+    static func pasteAndSend(_ text: String, restoringClipboard snapshot: ClipboardSnapshot? = nil) {
         _ = requestPostEventAccess()
         copyToClipboard(text)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             synthesizePaste()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                 synthesizeReturn()
+                restoreClipboardAfterPaste(snapshot)
             }
         }
     }
@@ -107,6 +116,47 @@ enum FocusPasteService {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+
+    /// Captures current general-pasteboard contents (all available typed data).
+    static func captureClipboard() -> ClipboardSnapshot {
+        let pasteboard = NSPasteboard.general
+        var items: [[NSPasteboard.PasteboardType: Data]] = []
+        for item in pasteboard.pasteboardItems ?? [] {
+            var typedData: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    typedData[type] = data
+                }
+            }
+            if !typedData.isEmpty {
+                items.append(typedData)
+            }
+        }
+        return ClipboardSnapshot(items: items)
+    }
+
+    static func restoreClipboard(_ snapshot: ClipboardSnapshot) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard !snapshot.items.isEmpty else { return }
+
+        let pasteboardItems: [NSPasteboardItem] = snapshot.items.map { typedData in
+            let item = NSPasteboardItem()
+            for (type, data) in typedData {
+                item.setData(data, forType: type)
+            }
+            return item
+        }
+        pasteboard.writeObjects(pasteboardItems)
+    }
+
+    /// Gives the target app a moment to read the pasteboard before we put the old contents back.
+    private static func restoreClipboardAfterPaste(_ snapshot: ClipboardSnapshot?) {
+        guard let snapshot else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            restoreClipboard(snapshot)
+        }
     }
 
     private static let editableRoles: Set<String> = [
