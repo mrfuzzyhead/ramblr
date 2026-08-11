@@ -1,8 +1,8 @@
 import Foundation
 
 enum TranscriptPostProcessor {
-    /// Converts spoken punctuation/formatting commands into characters, normalises
-    /// spacing, and always ends with a single trailing space for continued typing.
+    /// Converts spoken formatting commands into characters, normalises spacing,
+    /// and always ends with a single trailing space for continued typing.
     static func process(_ text: String) -> String {
         var result = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !result.isEmpty else { return " " }
@@ -22,29 +22,10 @@ enum TranscriptPostProcessor {
         let replacement: String
     }
 
-    /// Longer phrases first so "question mark" wins over bare "mark".
     private static let spokenCommandRules: [Rule] = [
         Rule(pattern: #"(?i)\bnew\s+paragraph\b"#, replacement: "\n\n"),
         Rule(pattern: #"(?i)\bnew\s+line\b"#, replacement: "\n"),
         Rule(pattern: #"(?i)\bnewline\b"#, replacement: "\n"),
-        Rule(pattern: #"(?i)\bquestion\s+mark\b"#, replacement: "?"),
-        Rule(pattern: #"(?i)\bexclamation\s+mark\b"#, replacement: "!"),
-        Rule(pattern: #"(?i)\bexclamation\s+point\b"#, replacement: "!"),
-        Rule(pattern: #"(?i)\bfull\s+stop\b"#, replacement: "."),
-        Rule(pattern: #"(?i)\bopen\s+quote\b"#, replacement: "\""),
-        Rule(pattern: #"(?i)\bclose\s+quote\b"#, replacement: "\""),
-        Rule(pattern: #"(?i)\bopen\s+parenthesis\b"#, replacement: "("),
-        Rule(pattern: #"(?i)\bclose\s+parenthesis\b"#, replacement: ")"),
-        Rule(pattern: #"(?i)\bopen\s+bracket\b"#, replacement: "["),
-        Rule(pattern: #"(?i)\bclose\s+bracket\b"#, replacement: "]"),
-        Rule(pattern: #"(?i)\bdot\s+dot\s+dot\b"#, replacement: "…"),
-        Rule(pattern: #"(?i)\bellipsis\b"#, replacement: "…"),
-        Rule(pattern: #"(?i)\bcomma\b"#, replacement: ","),
-        Rule(pattern: #"(?i)\bperiod\b"#, replacement: "."),
-        Rule(pattern: #"(?i)\bcolon\b"#, replacement: ":"),
-        Rule(pattern: #"(?i)\bsemicolon\b"#, replacement: ";"),
-        Rule(pattern: #"(?i)\bhyphen\b"#, replacement: "-"),
-        Rule(pattern: #"(?i)\bdash\b"#, replacement: "—"),
     ]
 
     private static func replace(pattern: String, with replacement: String, in text: String) -> String {
