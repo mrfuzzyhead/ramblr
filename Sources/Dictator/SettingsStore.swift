@@ -10,6 +10,7 @@ final class SettingsStore: ObservableObject {
         static let dictateAndSendShortcut = "dictateAndSendShortcut"
         static let legacyComposeShortcut = "composeShortcut"
         static let microphoneUID = "microphoneUID"
+        static let muteSpeakersWhileRecording = "muteSpeakersWhileRecording"
         static let history = "history"
         static let seededAPIKey = "seededAPIKey"
     }
@@ -33,6 +34,10 @@ final class SettingsStore: ObservableObject {
 
     @Published var microphoneUID: String? {
         didSet { defaults.set(microphoneUID, forKey: Keys.microphoneUID) }
+    }
+
+    @Published var muteSpeakersWhileRecording: Bool {
+        didSet { defaults.set(muteSpeakersWhileRecording, forKey: Keys.muteSpeakersWhileRecording) }
     }
 
     @Published private(set) var history: [TranscriptionEntry] {
@@ -72,6 +77,12 @@ final class SettingsStore: ObservableObject {
         }
 
         microphoneUID = defaults.string(forKey: Keys.microphoneUID)
+
+        if defaults.object(forKey: Keys.muteSpeakersWhileRecording) == nil {
+            muteSpeakersWhileRecording = true
+        } else {
+            muteSpeakersWhileRecording = defaults.bool(forKey: Keys.muteSpeakersWhileRecording)
+        }
 
         if let data = defaults.data(forKey: Keys.history),
            let decoded = try? decoder.decode([TranscriptionEntry].self, from: data) {

@@ -161,6 +161,25 @@ struct SettingsView: View {
                         .tint(RamblrTheme.accent)
                 }
                 .padding(16)
+
+                Divider().background(RamblrTheme.border)
+
+                HStack(alignment: .center, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Mute Speakers While Recording")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text("Silence system audio so background music isn't picked up by the microphone")
+                            .font(.system(size: 12))
+                            .foregroundStyle(RamblrTheme.secondaryText)
+                    }
+                    Spacer(minLength: 0)
+                    Toggle("Mute Speakers While Recording", isOn: $settings.muteSpeakersWhileRecording)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(RamblrTheme.accent)
+                }
+                .padding(16)
             }
 
             if let launchAtLoginError {

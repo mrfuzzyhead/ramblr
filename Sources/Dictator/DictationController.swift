@@ -27,6 +27,7 @@ final class DictationController: ObservableObject {
 
     private let settings = SettingsStore.shared
     private let recorder = AudioRecorder()
+    private let speakerMute = SpeakerMuteController()
     private let openAI = OpenAIService()
     private var hotKeyManager: HotKeyManager?
     private var recordingStartedAt: Date?
@@ -97,6 +98,7 @@ final class DictationController: ObservableObject {
         lastError = nil
         recordingElapsed = 0
         state = .preparing
+        muteSpeakersIfNeeded()
 
         if MicrophoneDeviceManager.permissionGranted() {
             finishBeginRecording()
@@ -106,6 +108,7 @@ final class DictationController: ObservableObject {
         Task {
             let granted = await MicrophoneDeviceManager.requestPermission()
             guard granted else {
+                restoreSpeakers()
                 lastError = MicrophoneError.permissionDenied.localizedDescription
                 ToastPresenter.shared.show(message: lastError ?? "Microphone permission denied.")
                 state = .idle
@@ -129,6 +132,7 @@ final class DictationController: ObservableObject {
             state = .recording
             startElapsedTimer()
         } catch {
+            restoreSpeakers()
             lastError = error.localizedDescription
             ToastPresenter.shared.show(message: error.localizedDescription)
             clipboardSnapshot = nil
@@ -139,6 +143,7 @@ final class DictationController: ObservableObject {
     func endRecording() {
         guard state == .preparing || state == .recording else { return }
 
+        restoreSpeakers()
         stopElapsedTimer()
 
         if state == .preparing {
@@ -238,6 +243,19 @@ final class DictationController: ObservableObject {
             delay = 3
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    func prepareForTermination() {
+        restoreSpeakers()
+    }
+
+    private func muteSpeakersIfNeeded() {
+        guard settings.muteSpeakersWhileRecording else { return }
+        speakerMute.mute()
+    }
+
+    private func restoreSpeakers() {
+        speakerMute.restore()
     }
 
     private func startElapsedTimer() {

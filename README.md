@@ -46,4 +46,5 @@ You can also drag `build/Ramblr.app` into `/Applications` in Finder.
 - Transcription uses Australian English spelling and converts spoken punctuation (e.g. “comma”, “new line”).
 - Pasted transcripts always include a trailing space.
 - Start at Login is in Settings → General (requires the installed `.app`).
+- Mute Speakers While Recording is on by default in Settings → General; system audio is silenced while you hold the shortcut and restored when you release.
 - The UI is dark mode only.
