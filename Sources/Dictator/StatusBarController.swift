@@ -25,7 +25,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         _ = FocusPasteService.isAccessibilityTrusted(prompt: false)
         dictation.start()
 
-        if SettingsStore.shared.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if SettingsStore.shared.selectedProviderAPIKey
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty {
             DispatchQueue.main.async { [weak self] in
                 self?.showSettingsWindow()
             }
@@ -82,7 +84,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         let hosting = NSHostingController(rootView: root)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 780, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 780, height: 560),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -144,6 +146,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let micItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         micItem.submenu = microphoneSubmenu()
         menu.addItem(micItem)
+
+        let providerItem = NSMenuItem(title: "Transcription", action: nil, keyEquivalent: "")
+        providerItem.submenu = transcriptionSubmenu()
+        menu.addItem(providerItem)
 
         let pasteItem = NSMenuItem(
             title: "Paste Last Transcript",
@@ -217,6 +223,22 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         return submenu
     }
 
+    private func transcriptionSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+        for provider in TranscriptionProvider.allCases {
+            let item = NSMenuItem(
+                title: provider.menuTitle,
+                action: #selector(selectTranscriptionProvider(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = provider.rawValue
+            item.state = settings.transcriptionProvider == provider ? .on : .off
+            submenu.addItem(item)
+        }
+        return submenu
+    }
+
     private func autoDetectTitle(devices: [MicrophoneDevice]) -> String {
         if let uid = MicrophoneDeviceManager.defaultInputDeviceUID(),
            let device = devices.first(where: { $0.id == uid }) {
@@ -276,6 +298,15 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func selectMicrophone(_ sender: NSMenuItem) {
         guard let uid = sender.representedObject as? String else { return }
         settings.microphoneUID = uid
+    }
+
+    @objc private func selectTranscriptionProvider(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let provider = TranscriptionProvider(rawValue: raw) else { return }
+        settings.transcriptionProvider = provider
+        if settings.selectedProviderAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            showSettingsWindow()
+        }
     }
 
     @objc private func pasteLastTranscript() {

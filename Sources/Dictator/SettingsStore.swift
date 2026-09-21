@@ -10,9 +10,11 @@ final class SettingsStore: ObservableObject {
         static let dictateAndSendShortcut = "dictateAndSendShortcut"
         static let legacyComposeShortcut = "composeShortcut"
         static let microphoneUID = "microphoneUID"
+        static let transcriptionProvider = "transcriptionProvider"
         static let muteSpeakersWhileRecording = "muteSpeakersWhileRecording"
         static let history = "history"
         static let seededAPIKey = "seededAPIKey"
+        static let seededGeminiAPIKey = "seededGeminiAPIKey"
     }
 
     private let defaults = UserDefaults.standard
@@ -22,6 +24,14 @@ final class SettingsStore: ObservableObject {
 
     @Published var apiKey: String {
         didSet { OpenAIKeyStore.save(apiKey) }
+    }
+
+    @Published var geminiAPIKey: String {
+        didSet { GeminiKeyStore.save(geminiAPIKey) }
+    }
+
+    @Published var transcriptionProvider: TranscriptionProvider {
+        didSet { defaults.set(transcriptionProvider.rawValue, forKey: Keys.transcriptionProvider) }
     }
 
     @Published var shortcut: KeyboardShortcut {
@@ -46,17 +56,44 @@ final class SettingsStore: ObservableObject {
 
     private init() {
         let storedKey = OpenAIKeyStore.read()
+        let resolvedOpenAIKey: String
         if storedKey.isEmpty {
-            let seeded = EnvLoader.openAIAPIKey()
+            let seeded = EnvLoader.apiKey(named: "OPENAI_API_KEY")
             if !seeded.isEmpty {
                 OpenAIKeyStore.save(seeded)
-                apiKey = seeded
+                resolvedOpenAIKey = seeded
                 defaults.set(true, forKey: Keys.seededAPIKey)
             } else {
-                apiKey = ""
+                resolvedOpenAIKey = ""
             }
         } else {
-            apiKey = storedKey
+            resolvedOpenAIKey = storedKey
+        }
+        apiKey = resolvedOpenAIKey
+
+        let storedGeminiKey = GeminiKeyStore.read()
+        let resolvedGeminiKey: String
+        if storedGeminiKey.isEmpty {
+            let seeded = EnvLoader.apiKey(named: "GEMINI_API_KEY")
+            if !seeded.isEmpty {
+                GeminiKeyStore.save(seeded)
+                resolvedGeminiKey = seeded
+                defaults.set(true, forKey: Keys.seededGeminiAPIKey)
+            } else {
+                resolvedGeminiKey = ""
+            }
+        } else {
+            resolvedGeminiKey = storedGeminiKey
+        }
+        geminiAPIKey = resolvedGeminiKey
+
+        if let rawProvider = defaults.string(forKey: Keys.transcriptionProvider),
+           let provider = TranscriptionProvider(rawValue: rawProvider) {
+            transcriptionProvider = provider
+        } else if resolvedOpenAIKey.isEmpty && !resolvedGeminiKey.isEmpty {
+            transcriptionProvider = .gemini
+        } else {
+            transcriptionProvider = .openAI
         }
 
         if let data = defaults.data(forKey: Keys.shortcut),
@@ -96,6 +133,15 @@ final class SettingsStore: ObservableObject {
         history.first?.text
     }
 
+    var selectedProviderAPIKey: String {
+        switch transcriptionProvider {
+        case .openAI:
+            return apiKey
+        case .gemini:
+            return geminiAPIKey
+        }
+    }
+
     func prependHistory(_ entry: TranscriptionEntry) {
         var next = history
         next.insert(entry, at: 0)
@@ -133,15 +179,15 @@ final class SettingsStore: ObservableObject {
 }
 
 enum EnvLoader {
-    static func openAIAPIKey() -> String {
-        if let env = ProcessInfo.processInfo.environment["OPENAI_API_KEY"],
+    static func apiKey(named key: String) -> String {
+        if let env = ProcessInfo.processInfo.environment[key],
            !env.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return env.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         for url in candidateEnvURLs() {
             guard let contents = try? String(contentsOf: url, encoding: .utf8) else { continue }
-            if let value = parse(key: "OPENAI_API_KEY", from: contents) {
+            if let value = parse(key: key, from: contents) {
                 return value
             }
         }

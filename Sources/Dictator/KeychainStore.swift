@@ -110,3 +110,20 @@ enum OpenAIKeyStore {
         try? KeychainStore.save(trimmed, account: account)
     }
 }
+
+enum GeminiKeyStore {
+    private static let account = "gemini-api-key"
+
+    static func read() -> String {
+        (try? KeychainStore.load(String.self, account: account)) ?? ""
+    }
+
+    static func save(_ key: String) {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            KeychainStore.delete(account: account)
+            return
+        }
+        try? KeychainStore.save(trimmed, account: account)
+    }
+}

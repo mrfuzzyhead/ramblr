@@ -29,6 +29,7 @@ final class DictationController: ObservableObject {
     private let recorder = AudioRecorder()
     private let speakerMute = SpeakerMuteController()
     private let openAI = OpenAIService()
+    private let gemini = GeminiService()
     private var hotKeyManager: HotKeyManager?
     private var recordingStartedAt: Date?
     private var clipboardSnapshot: ClipboardSnapshot?
@@ -179,9 +180,15 @@ final class DictationController: ObservableObject {
             }
 
             do {
-                let apiKey = settings.apiKey
+                let provider = settings.transcriptionProvider
                 let requestStarted = Date()
-                let text = try await openAI.transcribe(fileURL: fileURL, apiKey: apiKey)
+                let text: String
+                switch provider {
+                case .openAI:
+                    text = try await openAI.transcribe(fileURL: fileURL, apiKey: settings.apiKey)
+                case .gemini:
+                    text = try await gemini.transcribe(fileURL: fileURL, apiKey: settings.geminiAPIKey)
+                }
                 let transcriptionMs = max(
                     0,
                     Int((Date().timeIntervalSince(requestStarted) * 1000).rounded())

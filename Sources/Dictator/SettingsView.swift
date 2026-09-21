@@ -39,6 +39,8 @@ struct SettingsView: View {
     @State private var microphones: [MicrophoneDevice] = []
     @State private var draftAPIKey = ""
     @State private var isEditingAPIKey = false
+    @State private var draftGeminiAPIKey = ""
+    @State private var isEditingGeminiAPIKey = false
     @StateObject private var levelMonitor = MicrophoneLevelMonitor()
 
     @State private var launchAtLoginEnabled = LaunchAtLogin.isEnabled
@@ -64,6 +66,9 @@ struct SettingsView: View {
             refreshPermissions()
             refreshLaunchAtLogin()
             isEditingAPIKey = settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            isEditingGeminiAPIKey = settings.geminiAPIKey
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty
         }
         .onChange(of: pane) { _, newValue in
             if newValue == .microphone {
@@ -253,39 +258,120 @@ struct SettingsView: View {
     private var aiPane: some View {
         settingsDetail(
             title: "Artificial Intelligence",
-            subtitle: "Enter your OpenAI key for transcribing."
+            subtitle: "Choose a transcription provider and enter API keys."
         ) {
-            if isEditingAPIKey || settings.apiKey.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    SecureField("sk-…", text: $draftAPIKey)
-                        .textFieldStyle(.plain)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(RamblrTheme.border, lineWidth: 1)
-                        )
-                        .foregroundStyle(.white)
-
-                    Button("Save") {
-                        settings.apiKey = draftAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-                        draftAPIKey = ""
-                        isEditingAPIKey = settings.apiKey.isEmpty
+            settingsCard {
+                ForEach(Array(TranscriptionProvider.allCases.enumerated()), id: \.element.id) { index, provider in
+                    if index > 0 {
+                        Divider().background(RamblrTheme.border)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(RamblrTheme.accent)
-                    .foregroundStyle(.black)
-                    .disabled(draftAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    providerRow(provider)
                 }
+            }
+
+            apiKeyCard(
+                title: "OpenAI API Key",
+                placeholder: "sk-…",
+                key: settings.apiKey,
+                draft: $draftAPIKey,
+                isEditing: $isEditingAPIKey
+            ) { value in
+                settings.apiKey = value
+            }
+
+            apiKeyCard(
+                title: "Gemini API Key",
+                placeholder: "AIza…",
+                key: settings.geminiAPIKey,
+                draft: $draftGeminiAPIKey,
+                isEditing: $isEditingGeminiAPIKey
+            ) { value in
+                settings.geminiAPIKey = value
+            }
+
+            if let error = dictation.lastError {
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func providerRow(_ provider: TranscriptionProvider) -> some View {
+        Button {
+            settings.transcriptionProvider = provider
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: settings.transcriptionProvider == provider
+                      ? "checkmark.circle.fill"
+                      : "circle")
+                    .foregroundStyle(
+                        settings.transcriptionProvider == provider
+                            ? RamblrTheme.accent
+                            : RamblrTheme.tertiaryText
+                    )
+                    .font(.system(size: 16))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(provider.settingsTitle)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text(provider.settingsSubtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(RamblrTheme.secondaryText)
+                }
+                Spacer()
+            }
+            .padding(16)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func apiKeyCard(
+        title: String,
+        placeholder: String,
+        key: String,
+        draft: Binding<String>,
+        isEditing: Binding<Bool>,
+        onSave: @escaping (String) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+
+            if isEditing.wrappedValue || key.isEmpty {
+                SecureField(placeholder, text: draft)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(RamblrTheme.border, lineWidth: 1)
+                    )
+                    .foregroundStyle(.white)
+
+                Button("Save") {
+                    let value = draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    onSave(value)
+                    draft.wrappedValue = ""
+                    isEditing.wrappedValue = value.isEmpty
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(RamblrTheme.accent)
+                .foregroundStyle(.black)
+                .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             } else {
                 HStack {
-                    Text(maskedAPIKey)
+                    Text(maskedKey(key))
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.white)
                     Spacer()
                     Button {
-                        draftAPIKey = ""
-                        isEditingAPIKey = true
+                        draft.wrappedValue = ""
+                        isEditing.wrappedValue = true
                     } label: {
                         Text("Change")
                             .padding(.horizontal, 12)
@@ -309,13 +395,6 @@ struct SettingsView: View {
                 Text("Your key is stored securely in the key vault and is not visible in Ramblr. Click the change button to use a different key.")
                     .font(.system(size: 12))
                     .foregroundStyle(RamblrTheme.secondaryText)
-            }
-
-            if let error = dictation.lastError {
-                Text(error)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
             }
         }
     }
@@ -494,8 +573,7 @@ struct SettingsView: View {
         return "Auto-detect (System Default)"
     }
 
-    private var maskedAPIKey: String {
-        let key = settings.apiKey
+    private func maskedKey(_ key: String) -> String {
         guard key.count > 10 else { return String(repeating: "•", count: max(key.count, 8)) }
         let prefix = String(key.prefix(3))
         let suffix = String(key.suffix(8))
